@@ -1,7 +1,7 @@
 import torch
 from transformers import AutoProcessor, AutoTokenizer
 
-from robometer.data.dataset_types import PreferenceSample, ProgressSample, SampleType, SimilaritySample
+from robometer.data.dataset_types import PreferenceSample, ProgressSample, SampleType
 
 
 class BaseCollator:
@@ -42,63 +42,47 @@ class BaseCollator:
         samples: list[SampleType],
     ) -> dict[str, torch.Tensor]:
         """
-        Collate a list of samples into separate batches for preferences, progress, and similarities.
-        For VQA-based reward modeling, everything goes through language generation.
+        Collate a list of samples into separate batches for preferences and progress.
 
         Args:
             samples: List of Sample objects or dictionaries that can be converted to Sample objects
 
         Returns:
-            Dictionary containing separate batches for preferences, progress, and similarities
+            Dictionary containing separate batches for preferences and progress
         """
         # Convert dictionaries to Sample objects if needed
         sample_objects = []
         for sample in samples:
             if isinstance(sample, dict):
-                # Convert dict to appropriate Sample object based on sample_type
                 sample_type = sample.get("sample_type", "unknown")
                 if sample_type == "preference":
                     sample_obj = PreferenceSample(**sample)
-                elif sample_type == "similarity":
-                    sample_obj = SimilaritySample(**sample)
                 elif sample_type == "progress":
                     sample_obj = ProgressSample(**sample)
                 else:
                     raise ValueError(
-                        f"Unknown sample_type: {sample_type}. Must be 'preference', 'similarity', or 'progress'"
+                        f"Unknown sample_type: {sample_type}. Must be 'preference' or 'progress'"
                     )
                 sample_objects.append(sample_obj)
-            elif isinstance(sample, (PreferenceSample, SimilaritySample, ProgressSample)):
+            elif isinstance(sample, (PreferenceSample, ProgressSample)):
                 sample_objects.append(sample)
             else:
                 raise ValueError(f"Expected Sample object or dict, got {type(sample)}")
 
-        # Separate samples by sample type
         preference_samples = [s for s in sample_objects if s.sample_type == "preference"]
-        similarity_samples = [s for s in sample_objects if s.sample_type == "similarity"]
         progress_samples = [s for s in sample_objects if s.sample_type == "progress"]
 
-        # Process preferences
         preference_inputs = {}
         if preference_samples:
             preference_inputs = self._process_preference_batch(preference_samples)
 
-        # Process similarities
-        similarity_inputs = {}
-        if similarity_samples:
-            similarity_inputs = self._process_similarity_batch(similarity_samples)
-
-        # Process progress
         progress_inputs = {}
         if progress_samples:
             progress_inputs = self._process_progress_batch(progress_samples)
 
-        # Return all batches
         return {
             "preference_inputs": preference_inputs,
-            "similarity_inputs": similarity_inputs,
             "progress_inputs": progress_inputs,
             "num_preferences": len(preference_samples),
-            "num_similarities": len(similarity_samples),
             "num_progress": len(progress_samples),
         }

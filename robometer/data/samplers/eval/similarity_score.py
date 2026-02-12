@@ -15,7 +15,7 @@ from robometer.data.samplers.base import RFMBaseSampler
 from robometer.utils.distributed import rank_0_print
 
 
-class SimilarityScoreSampler(RFMBaseSampler):
+class SimilarityScoreSampler(RBMBaseSampler):
     """
     Data generator that creates similarity samples for evaluation.
 

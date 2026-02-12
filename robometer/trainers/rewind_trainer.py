@@ -1,8 +1,8 @@
-from .rfm_heads_trainer import RFMHeadsTrainer
+from .rbm_heads_trainer import RBMHeadsTrainer
 from robometer.utils.timer import _timer
 
 
-class ReWiNDTrainer(RFMHeadsTrainer):
+class ReWiNDTrainer(RBMHeadsTrainer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 

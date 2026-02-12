@@ -9,12 +9,12 @@ from collections import Counter, defaultdict
 from typing import Tuple
 
 from robometer.data.dataset_types import PreferenceSample, ProgressSample
-from robometer.data.samplers.base import RFMBaseSampler
+from robometer.data.samplers.base import RBMBaseSampler
 from robometer.utils.distributed import rank_0_print
 from sentence_transformers import SentenceTransformer
 
 
-class ConfusionMatrixSampler(RFMBaseSampler):
+class ConfusionMatrixSampler(RBMBaseSampler):
     """
     Data generator that creates task-trajectory pairs for confusion matrix analysis.
 

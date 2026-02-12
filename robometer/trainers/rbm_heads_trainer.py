@@ -23,7 +23,6 @@ from robometer.evals.compile_results import (
     run_reward_alignment_eval_per_trajectory,
     run_confusion_matrix_eval,
     run_policy_ranking_eval,
-    run_similarity_score_eval,
 )
 from robometer.models.utils import ModelOutput, convert_bins_to_continuous, convert_discrete_target_to_continuous
 from robometer.utils.distributed import banner, get_rank, is_rank_0, log_fsdp_diagnostics
@@ -125,7 +124,7 @@ def reduce_metrics_with_accelerate(metrics: Dict[str, Any], accelerator, aggrega
     return result_metrics
 
 
-class RFMHeadsTrainer(Trainer):
+class RBMHeadsTrainer(Trainer):
     def __init__(self, config, *args, logger=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.config = config
@@ -407,13 +406,11 @@ class RFMHeadsTrainer(Trainer):
         # Extract the separate batches
         preference_inputs = inputs.get("preference_inputs", {})
         progress_inputs = inputs.get("progress_inputs", {})
-        similarity_inputs = inputs.get("similarity_inputs", {})
         num_preferences = inputs.get("num_preferences", 0)
         num_progress = inputs.get("num_progress", 0)
-        num_similarities = inputs.get("num_similarities", 0)
 
         logger.trace(
-            f"num_preferences: {num_preferences}, num_progress: {num_progress}, num_similarities: {num_similarities}"
+            f"num_preferences: {num_preferences}, num_progress: {num_progress}"
         )
 
         if num_preferences > 0 and preference_inputs:
@@ -438,22 +435,10 @@ class RFMHeadsTrainer(Trainer):
                 for ds in data_sources:
                     self.global_metadata[f"total_{ds}"] += 1.0
 
-        if num_similarities > 0 and similarity_inputs:
-            data_gen_strategy = similarity_inputs["data_gen_strategy"]
-            if isinstance(data_gen_strategy, list) and len(data_gen_strategy) > 0:
-                for s in data_gen_strategy:
-                    self.global_metadata[f"sim_{s}"] += 1
-
-            data_sources = similarity_inputs.get("data_source", None)
-            if data_sources is not None:
-                for ds in data_sources:
-                    self.global_metadata[f"total_{ds}"] += 1.0
-
         # Update global metadata for training
         # add to total batch size and sum across all processes
-        self.global_metadata["total_samples"] += num_preferences + num_similarities + num_progress
+        self.global_metadata["total_samples"] += num_preferences + num_progress
         self.global_metadata["total_preferences"] += num_preferences
-        self.global_metadata["total_similarities"] += num_similarities
         self.global_metadata["total_progress"] += num_progress
 
         logger.trace("finished updating global metadata")
@@ -583,7 +568,7 @@ class RFMHeadsTrainer(Trainer):
 
         local_pairs: List[Tuple[str, float]] = []
 
-        for key in ("preference_inputs", "progress_inputs", "similarity_inputs"):
+        for key in ("preference_inputs", "progress_inputs"):
             sample_inputs = inputs.get(key) or {}
             resample_attempts = sample_inputs.get("resample_attempts")
             if resample_attempts is None:
@@ -649,7 +634,7 @@ class RFMHeadsTrainer(Trainer):
             self.log_metadata[f"data/resample_mean_{safe_label}"] = strategy_mean
 
     def _log_metadata(self):
-        """Log custom RFM losses to wandb and console."""
+        """Log custom RBM losses to wandb and console."""
         if not self.log_metadata:
             return
 
@@ -730,8 +715,8 @@ class RFMHeadsTrainer(Trainer):
         """Setup dataset and dataloader for evaluation."""
         eval_cfg = copy.deepcopy(self.config.data)
 
-        # explicitly set dataset type to rfm for custom eval datasets
-        eval_cfg.dataset_type = "rfm"
+        # explicitly set dataset type to rbm for custom eval datasets
+        eval_cfg.dataset_type = "rbm"
 
         if isinstance(eval_dataset, list):
             eval_cfg.eval_datasets = eval_dataset
@@ -745,7 +730,7 @@ class RFMHeadsTrainer(Trainer):
         if eval_type == "reward_alignment":
             sampler_kwargs["max_trajectories"] = self.config.custom_eval.reward_alignment_max_trajectories
             sampler_kwargs["frame_step"] = (
-                2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
+                2 if (self.config.trainer_cls == "rbm_heads" and not self.config.data.use_multi_image) else 1
             )
             sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
         elif eval_type == "policy_ranking":
@@ -753,7 +738,7 @@ class RFMHeadsTrainer(Trainer):
             sampler_kwargs["num_partial_successes"] = self.config.custom_eval.num_partial_successes
             sampler_kwargs["max_tasks"] = self.config.custom_eval.policy_ranking_max_tasks
             sampler_kwargs["frame_step"] = (
-                2 if (self.config.trainer_cls == "rfm_heads" and not self.config.data.use_multi_image) else 1
+                2 if (self.config.trainer_cls == "rbm_heads" and not self.config.data.use_multi_image) else 1
             )
             # sampler_kwargs["use_frame_steps"] = self.config.custom_eval.use_frame_steps
             # we only care about the final predicted progress for ranking
@@ -928,79 +913,6 @@ class RFMHeadsTrainer(Trainer):
 
         return batch_results, outputs
 
-    def _process_batch_similarity_eval(self, batch):
-        """Process a batch for similarity-based evaluations (similarity_score)."""
-        logger.trace(f"    Processing similarity_score batch")
-        similarity_samples = batch["similarity_inputs"]
-
-        # Log similarity batch details
-        num_sim_samples = len(similarity_samples.get("data_source", []))
-        logger.trace(f"    Similarity samples on this rank: {num_sim_samples}")
-        if "input_ids" in similarity_samples:
-            logger.trace(f"    input_ids shape: {similarity_samples['input_ids'].shape}")
-
-        logger.trace(f"    Calling forward_model for similarity")
-        # log_memory_usage(f"Before similarity forward pass")
-
-        with torch.no_grad():
-            outputs, _ = self.forward_model(self.model, similarity_samples, sample_type="similarity")
-
-        logger.trace(f"    Forward pass complete")
-        # log_memory_usage(f"After similarity forward pass")
-
-        sim_logits = outputs.sim_logits
-        logger.trace(f"    sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
-
-        # Gather predictions across all ranks
-        logger.trace(f"    Gathering sim_logits across ranks")
-        sim_logits = self.accelerator.gather_for_metrics(sim_logits)
-        logger.trace(f"    Gathered sim_logits shape: {sim_logits.shape if sim_logits is not None else 'None'}")
-
-        # Gather non-tensor metadata using helper (handles optional/None entries)
-        logger.trace(f"    Gathering metadata across ranks")
-        gathered_sim_metadata = self._gather_metadata_fields(
-            similarity_samples,
-            ["task", "data_source", "data_gen_strategy", "metadata"],
-        )
-        logger.trace(f"    Metadata gathered, building eval_results")
-        num_sim_samples = len(sim_logits) // 2 if sim_logits is not None else 0
-        gathered_sim_metadata = self._truncate_metadata_lists(gathered_sim_metadata, num_sim_samples)
-
-        # Build eval_results on all processes for compute_eval_metrics
-        # The sim_logits are batched as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
-        # We need to extract ref_sim (even indices) and ref_diff (odd indices)
-        # The metadata lists have length = num_samples, but sim_logits has length = 2 * num_samples
-        batch_results = []
-        num_samples = len(sim_logits) // 2
-        for i in range(num_samples):
-            ref_sim_idx = i * 2
-            ref_diff_idx = i * 2 + 1
-
-            if ref_sim_idx >= len(sim_logits) or ref_diff_idx >= len(sim_logits):
-                continue
-
-            # Metadata is indexed by sample index (i), not batched index
-            sample_result = {
-                "task": gathered_sim_metadata["task"][i] if i < len(gathered_sim_metadata["task"]) else None,
-                "sim_score_ref_sim": t2n(sim_logits[ref_sim_idx]),
-                "sim_score_ref_diff": t2n(sim_logits[ref_diff_idx]),
-                "data_source": gathered_sim_metadata["data_source"][i]
-                if i < len(gathered_sim_metadata["data_source"])
-                else None,
-                "data_gen_strategy": gathered_sim_metadata["data_gen_strategy"][i]
-                if i < len(gathered_sim_metadata["data_gen_strategy"])
-                else None,
-                "metadata": gathered_sim_metadata["metadata"][i]
-                if i < len(gathered_sim_metadata["metadata"])
-                else None,
-            }
-            batch_results.append(sample_result)
-
-        # Clean up gathered tensors and metadata after building results
-        del sim_logits, gathered_sim_metadata
-
-        return batch_results, outputs
-
     def _compute_and_log_eval_metrics(self, eval_type, eval_results, ds_name, eval_step):
         """Compute metrics and create visualizations for evaluation results."""
         # Initialize variables to None to ensure they exist for cleanup
@@ -1032,7 +944,7 @@ class RFMHeadsTrainer(Trainer):
                 data_source,
                 use_frame_steps=self.config.custom_eval.use_frame_steps,
                 train_success_head=self.config.model.train_success_head,
-                last_frame_only=self.config.model.model_type == "vqa",
+                last_frame_only=False,
             )
             # log_memory_usage(f"After compute_eval_metrics (reward_alignment)")
 
@@ -1426,42 +1338,6 @@ class RFMHeadsTrainer(Trainer):
             task_groups = None
             task_details = None
             # log_memory_usage(f"After deleting quality_preference data")
-        elif eval_type == "similarity_score":
-            eval_metrics, task_groups, task_details = run_similarity_score_eval(eval_results)
-            # log_memory_usage(f"After compute_eval_metrics (similarity_score)")
-
-            banner(
-                f"{eval_type} evaluation: {len(eval_results)} samples",
-                f"Metrics: {eval_metrics}",
-                inner_padding=1,
-            )
-
-            # Create wandb table for similarity score results
-            data = []
-            for task, group in task_groups.items():
-                task_margin = task_details.get(task, {}).get("avg_margin", 0.0)
-                task_same_task_score = task_details.get(task, {}).get("avg_same_task_score", 0.0)
-                task_diff_task_score = task_details.get(task, {}).get("avg_diff_task_score", 0.0)
-                num_pairs = task_details.get(task, {}).get("num_pairs", 0)
-                data.append([
-                    task,
-                    round(task_margin, 3),
-                    round(task_same_task_score, 3),
-                    round(task_diff_task_score, 3),
-                    num_pairs,
-                ])
-            columns = ["task", "avg_margin", "avg_same_task_score", "avg_diff_task_score", "num_pairs"]
-            self.logger.log_table(
-                f"similarity_score_samples/{ds_name}",
-                data=data,
-                columns=columns,
-                step=eval_step,
-            )
-            # log_memory_usage(f"Before deleting similarity_score data")
-            del data, task_groups, task_details
-            task_groups = None
-            task_details = None
-            # log_memory_usage(f"After deleting similarity_score data")
         else:
             raise ValueError(f"Unsupported eval type: {eval_type}")
 
@@ -1621,12 +1497,8 @@ class RFMHeadsTrainer(Trainer):
                 elif "quality_preference" in eval_type:
                     batch_results, outputs = self._process_batch_preference_eval(batch)
                     eval_results.extend(batch_results)
-                elif eval_type == "similarity_score":
-                    batch_results, outputs = self._process_batch_similarity_eval(batch)
-                    eval_results.extend(batch_results)
-
                 # Clean up batch tensors and free memory after each batch
-                # This is critical for VQA with generation to prevent OOM
+                # Free memory after each batch to prevent OOM
                 del batch, outputs
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
@@ -1695,7 +1567,6 @@ class RFMHeadsTrainer(Trainer):
             "policy_ranking": "p_rank",
             "quality_preference": "pref",
             "quality_preference_roboarena": "pref_robo",
-            "similarity_score": "sim_score",
         }
 
         banner("Running custom evaluations", f"Custom evaluations: {eval_types}")
@@ -1897,11 +1768,11 @@ class RFMHeadsTrainer(Trainer):
         return metrics
 
     def compute_loss(self, model, inputs, return_outputs=False, training=True, **kwargs):
-        """Compute loss for separate preference and similarity batches."""
+        """Compute loss for separate preference and progress batches."""
         logger.trace("compute_loss: Starting")
 
         # Set static graph for DDP on first training step to handle multiple forward passes
-        # This is necessary because similarity loss does 2 forward passes (ref_sim and ref_diff)
+        # Preference and progress losses are computed in separate forward passes.
         if (
             training
             and not self._ddp_static_graph_set
@@ -1920,17 +1791,15 @@ class RFMHeadsTrainer(Trainer):
         # Extract the separate batches
         preference_inputs = inputs.get("preference_inputs", {})
         progress_inputs = inputs.get("progress_inputs", {})
-        similarity_inputs = inputs.get("similarity_inputs", {})
 
         num_preferences = inputs.get("num_preferences", 0)
-        num_similarities = inputs.get("num_similarities", 0)
         num_progress = inputs.get("num_progress", 0)
 
         total_loss = 0
         log_metadata = {}
 
         logger.trace(
-            f"Num preferences: {num_preferences}, Num similarities: {num_similarities}, Num progress: {num_progress}"
+            f"Num preferences: {num_preferences}, Num progress: {num_progress}"
         )
 
         # Compute preference loss if we have preference samples
@@ -1955,18 +1824,6 @@ class RFMHeadsTrainer(Trainer):
                     total_loss += progress_loss
                 else:
                     logger.warning(f"NaN detected in progress loss, replacing with 0.0")
-                log_metadata.update(loss_dict)
-
-        # Compute similarity loss if we have similarity samples
-        if num_similarities > 0 and similarity_inputs and self.config.model.train_similarity_head:
-            with _timer("time/compute_similarity_loss", timing_raw=self.timing_raw):
-                similarity_loss, loss_dict = self._compute_similarity_loss(
-                    model, similarity_inputs, return_outputs=True, training=training
-                )
-                if not torch.isnan(similarity_loss).any():
-                    total_loss += similarity_loss
-                else:
-                    logger.warning(f"NaN detected in similarity loss, replacing with 0.0")
                 log_metadata.update(loss_dict)
 
         for key, value in log_metadata.items():
@@ -2753,404 +2610,3 @@ class RFMHeadsTrainer(Trainer):
 
         return final_loss
 
-    def _compute_similarity_loss(self, model, inputs, return_outputs=False, training=True):
-        """Compute similarity scoring loss (DPO-style).
-
-        The inputs are already batched by the collator as [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
-        We do a single forward pass and then extract scores for ref_sim (even indices) and ref_diff (odd indices).
-        """
-
-        logger.trace("computing similarity loss")
-
-        # Check batch size consistency across ranks
-        batch_size = inputs.get("input_ids", torch.tensor([])).shape[0] if "input_ids" in inputs else 0
-        logger.trace(f"similarity batch size: {batch_size}")
-
-        for key, value in inputs.items():
-            if isinstance(value, torch.Tensor):
-                logger.trace(f"{key}: {value.shape}")
-            else:
-                logger.trace(f"{key}: {value}")
-
-        # Single forward pass with batched inputs (already batched by collator)
-        # Batch structure: [ref_sim_0, ref_diff_0, ref_sim_1, ref_diff_1, ...]
-        logger.trace("About to call forward_model for similarity")
-        batched_outputs, _ = self.forward_model(model, inputs, sample_type="similarity")
-
-        logger.trace("finished forward pass for similarity loss")
-
-        # Extract batch size (number of similarity samples)
-        # The batched input has 2x the number of samples (ref_sim + ref_diff for each)
-        num_samples = len(inputs.get("data_source", []))
-        batch_size = num_samples  # Number of similarity samples
-
-        # Split outputs: even indices are ref_sim, odd indices are ref_diff
-        # Handle sim_logits
-        sim_logits_ref_sim = (
-            batched_outputs.sim_logits[::2] if batched_outputs.sim_logits is not None else None
-        )  # Even indices
-        sim_logits_ref_diff = (
-            batched_outputs.sim_logits[1::2] if batched_outputs.sim_logits is not None else None
-        )  # Odd indices
-
-        logger.trace(f"sim_logits_ref_sim: {sim_logits_ref_sim}, shape: {sim_logits_ref_sim.shape}")
-        logger.trace(f"sim_logits_ref_diff: {sim_logits_ref_diff}, shape: {sim_logits_ref_diff.shape}")
-
-        # Handle progress_logits - only extract A (reference trajectory)
-        progress_logits_ref_sim = None
-        progress_logits_ref_diff = None
-        if batched_outputs.progress_logits is not None and batched_outputs.progress_logits.get("A") is not None:
-            progress_A = batched_outputs.progress_logits["A"]
-            # Split along batch dimension: even indices are ref_sim, odd indices are ref_diff
-            progress_A_ref_sim = progress_A[::2]  # A (ref) for ref_sim comparisons
-            progress_A_ref_diff = progress_A[1::2]  # A (ref) for ref_diff comparisons
-
-            # Only use A (reference trajectory) for progress prediction
-            progress_logits_ref_sim = {"A": progress_A_ref_sim, "B": None}
-            progress_logits_ref_diff = {"A": progress_A_ref_diff, "B": None}
-
-        # Handle success_logits - only extract A (reference trajectory)
-        success_logits_ref_sim = None
-        success_logits_ref_diff = None
-        if batched_outputs.success_logits is not None and batched_outputs.success_logits.get("A") is not None:
-            success_A = batched_outputs.success_logits["A"]
-            # Split along batch dimension: even indices are ref_sim, odd indices are ref_diff
-            success_A_ref_sim = success_A[::2]  # A (ref) for ref_sim comparisons
-            success_A_ref_diff = success_A[1::2]  # A (ref) for ref_diff comparisons
-
-            # Only use A (reference trajectory) for success prediction
-            success_logits_ref_sim = {"A": success_A_ref_sim, "B": None}
-            success_logits_ref_diff = {"A": success_A_ref_diff, "B": None}
-
-        # Handle preference_logits - extract from ref_diff pairs (odd indices) if predict_pref_sim is enabled
-        preference_logits_ref_diff = None
-        if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
-            if batched_outputs.pref_logits is not None:
-                # Extract preference logits for ref_diff pairs (odd indices)
-                preference_logits_ref_diff = batched_outputs.pref_logits[1::2]  # Odd indices
-
-        model_outputs_ref_sim = ModelOutput(
-            sim_logits=sim_logits_ref_sim,
-            progress_logits=progress_logits_ref_sim,
-            success_logits=success_logits_ref_sim,
-        )
-        model_outputs_ref_diff = ModelOutput(
-            sim_logits=sim_logits_ref_diff,
-            progress_logits=progress_logits_ref_diff,
-            success_logits=success_logits_ref_diff,
-        )
-
-        score_ref_sim = model_outputs_ref_sim.sim_logits.squeeze(-1)
-        score_ref_diff = model_outputs_ref_diff.sim_logits.squeeze(-1)
-
-        # Clamp logits to prevent extreme values and gradient issues
-        score_ref_sim = torch.clamp(score_ref_sim, min=-50.0, max=50.0)
-        score_ref_diff = torch.clamp(score_ref_diff, min=-50.0, max=50.0)
-
-        # Compute DPO-style loss: encourage trajectory sim to be more similar to reference than trajectory diff
-        # This assumes trajectory sim is the "better" trajectory (more similar to reference)
-        # Use softplus for numerical stability: -log(sigmoid(x)) = log(1 + exp(-x)) = softplus(-x)
-        diff_scores = self.config.training.beta * (score_ref_sim - score_ref_diff)
-        diff_scores = torch.clamp(diff_scores, min=-50.0, max=50.0)
-        similarity_loss_all = F.softplus(-diff_scores)
-        similarity_loss = similarity_loss_all.mean()
-        similarity_margin = (score_ref_sim - score_ref_diff).detach()
-        final_loss = 0
-        if not torch.isnan(similarity_loss).any():
-            final_loss += similarity_loss
-        else:
-            logger.warning(f"NaN detected in similarity loss")
-
-        # =========================================================================================
-        # Compute progress and success loss for trajectory A (first trajectory) in both ref_sim and ref_diff
-        # =========================================================================================
-        # Always predict progress/success for trajectory A (first trajectory) for both comparisons
-        # Get target progress and masks for trajectory A in each comparison
-        target_progress_sim_A = inputs["target_progress_sim_A"]  # [batch_size, seq_len]
-        target_progress_sim_A_mask = inputs["target_progress_sim_A_mask"].unsqueeze(-1)  # [batch_size, 1]
-        target_progress_diff_A = inputs["target_progress_diff_A"]  # [batch_size, seq_len]
-        target_progress_diff_A_mask = inputs["target_progress_diff_A_mask"].unsqueeze(-1)  # [batch_size, 1]
-
-        # Get success labels for trajectory A in each comparison
-        success_labels_sim_A = inputs["success_labels_sim_A"]  # [batch_size, seq_len]
-        success_labels_diff_A = inputs["success_labels_diff_A"]  # [batch_size, seq_len]
-
-        if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
-            # Get progress logits for trajectory A (first trajectory) in both comparisons
-            progress_logits_ref_sim = model_outputs_ref_sim.progress_logits
-            progress_logits_ref_diff = model_outputs_ref_diff.progress_logits
-            progress_pred_ref_sim = progress_logits_ref_sim["A"]  # [batch_size, seq_len]
-            progress_pred_ref_diff = progress_logits_ref_diff["A"]  # [batch_size, seq_len]
-
-            # Compute progress loss for ref_sim (using trajectory A)
-            predict_last_frame_mask_sim_A = inputs.get("predict_last_frame_mask_sim_A", None)
-            progress_loss_ref_sim, spearman_corr_ref_sim, progress_metrics_ref_sim = self._compute_progress_loss_helper(
-                progress_pred_ref_sim,
-                target_progress_sim_A,
-                target_progress_sim_A_mask,
-                predict_last_frame_mask=predict_last_frame_mask_sim_A,
-            )
-
-            # Compute progress loss for ref_diff (using trajectory A)
-            predict_last_frame_mask_diff_A = inputs.get("predict_last_frame_mask_diff_A", None)
-            progress_loss_ref_diff, spearman_corr_ref_diff, progress_metrics_ref_diff = (
-                self._compute_progress_loss_helper(
-                    progress_pred_ref_diff,
-                    target_progress_diff_A,
-                    target_progress_diff_A_mask,
-                    predict_last_frame_mask=predict_last_frame_mask_diff_A,
-                )
-            )
-
-            # Sum the progress losses
-            total_progress_loss = progress_loss_ref_sim + progress_loss_ref_diff
-            final_loss = similarity_loss + total_progress_loss
-
-        if self.config.model.train_success_head:
-            # Get success logits for trajectory A (first trajectory) in both comparisons
-            success_logits_ref_sim = model_outputs_ref_sim.success_logits
-            success_logits_ref_diff = model_outputs_ref_diff.success_logits
-            success_pred_ref_sim = success_logits_ref_sim["A"]  # [batch_size, seq_len]
-            success_pred_ref_diff = success_logits_ref_diff["A"]  # [batch_size, seq_len]
-
-            # Get quality labels for trajectory A in each comparison
-            quality_labels_sim_A = inputs.get("trajectory_A_quality_label_sim", None)
-            quality_labels_diff_A = inputs.get("trajectory_A_quality_label_diff", None)
-
-            # Compute success loss for ref_sim (using trajectory A)
-            success_loss_ref_sim, success_accuracy_ref_sim, success_auprc_ref_sim, success_metrics_ref_sim = (
-                self._compute_success_loss_helper(
-                    success_pred_ref_sim,
-                    target_progress_sim_A,
-                    success_labels_sim_A,
-                    progress_loss_mask=target_progress_sim_A_mask,
-                    quality_labels=quality_labels_sim_A,
-                )
-            )
-
-            # Compute success loss for ref_diff (using trajectory A)
-            success_loss_ref_diff, success_accuracy_ref_diff, success_auprc_ref_diff, success_metrics_ref_diff = (
-                self._compute_success_loss_helper(
-                    success_pred_ref_diff,
-                    target_progress_diff_A,
-                    success_labels_diff_A,
-                    progress_loss_mask=target_progress_diff_A_mask,
-                    quality_labels=quality_labels_diff_A,
-                )
-            )
-
-            # Sum the success losses (already balanced via per-sample weighting of minority class)
-            total_success_loss = success_loss_ref_sim + success_loss_ref_diff
-            success_accuracy = (success_accuracy_ref_sim + success_accuracy_ref_diff) / 2.0
-            success_auprc = (success_auprc_ref_sim + success_auprc_ref_diff) / 2.0
-            if not torch.isnan(total_success_loss).any():
-                final_loss = final_loss + total_success_loss
-
-        # =========================================================================================
-        # Compute preference loss for ref/diff pair if predict_pref_sim is enabled
-        # =========================================================================================
-        # Ref is always preferred over diff, so we compute preference loss for the ref_diff pairs
-        preference_loss_ref_diff = None
-        if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
-            if preference_logits_ref_diff is not None:
-                preference_labels_ref_diff = inputs.get("preference_labels_ref_diff")
-                if preference_labels_ref_diff is not None:
-                    # Clamp logits to prevent extreme values and gradient issues
-                    preference_scores_ref_diff = torch.clamp(
-                        preference_logits_ref_diff.squeeze(-1), min=-50.0, max=50.0
-                    )
-
-                    # Binary cross entropy loss for preference prediction
-                    preference_loss_ref_diff_all = F.binary_cross_entropy_with_logits(
-                        preference_scores_ref_diff, preference_labels_ref_diff.float(), reduction="none"
-                    )
-                    preference_loss_ref_diff = preference_loss_ref_diff_all.mean()
-
-                    if not torch.isnan(preference_loss_ref_diff).any():
-                        final_loss += preference_loss_ref_diff
-                    else:
-                        logger.warning(f"NaN detected in similarity preference loss")
-                else:
-                    logger.warning("predict_pref_sim is enabled but preference_labels_ref_diff not found in inputs")
-            else:
-                logger.warning("predict_pref_sim is enabled but pref_logits not found in batched_outputs")
-
-        if return_outputs:
-            outputs_dict = {}
-            prefix = "train" if training else "eval"
-
-            # Compute similarity ranking accuracy
-            # If score_ref_sim > score_ref_diff, model correctly ranks sim as more similar
-            similarity_correct = (score_ref_sim > score_ref_diff).float()
-            similarity_accuracy = similarity_correct.mean()
-            avg_similarity_margin = similarity_margin.mean()
-
-            data_gen_strategy = inputs["data_gen_strategy"]
-
-            # Prepare metrics for stratification
-            stratified_metrics = {
-                "sim_acc": similarity_correct,
-                "sim_loss": similarity_loss_all,
-                "sim_margin": similarity_margin,
-            }
-
-            self._add_stratified_metrics(
-                outputs_dict,
-                prefix,
-                data_gen_strategy,
-                inputs["data_source"],
-                stratified_metrics,
-            )
-
-            # Add main metrics
-            outputs_dict.update({
-                f"{prefix}/similarity_loss": similarity_loss.item(),
-                f"{prefix}/similarity_acc": similarity_accuracy.item(),
-                f"{prefix}/similarity_margin": avg_similarity_margin.item(),
-            })
-
-            # Add progress loss metrics if computed
-            if self.config.model.train_progress_head and self.config.training.predict_sim_progress:
-                outputs_dict.update({
-                    f"{prefix}/sim_prog_loss": total_progress_loss.item(),
-                    f"{prefix}/sim_prog_loss_ref_sim": progress_loss_ref_sim.item(),
-                    f"{prefix}/sim_prog_loss_ref_diff": progress_loss_ref_diff.item(),
-                    f"{prefix}/sim_prog_spearman_corr": (spearman_corr_ref_sim + spearman_corr_ref_diff).item() / 2.0,
-                })
-
-                # Add progress accuracy for discrete mode
-                if (
-                    "masked_progress_accuracy" in progress_metrics_ref_sim
-                    and "masked_progress_accuracy" in progress_metrics_ref_diff
-                ):
-                    # Expand masks to match masked_progress_accuracy shape [batch_size, seq_len]
-                    masked_progress_accuracy_sim = progress_metrics_ref_sim["masked_progress_accuracy"]
-                    masked_progress_accuracy_diff = progress_metrics_ref_diff["masked_progress_accuracy"]
-                    batch_size, seq_len = masked_progress_accuracy_sim.shape
-
-                    if target_progress_sim_A_mask.shape[1] != seq_len:
-                        mask_expanded_sim = target_progress_sim_A_mask.expand(batch_size, seq_len)
-                    else:
-                        mask_expanded_sim = target_progress_sim_A_mask
-
-                    if target_progress_diff_A_mask.shape[1] != seq_len:
-                        mask_expanded_diff = target_progress_diff_A_mask.expand(batch_size, seq_len)
-                    else:
-                        mask_expanded_diff = target_progress_diff_A_mask
-
-                    progress_accuracy_ref_sim = masked_progress_accuracy_sim.sum() / (mask_expanded_sim.sum() + 1e-8)
-                    progress_accuracy_ref_diff = masked_progress_accuracy_diff.sum() / (mask_expanded_diff.sum() + 1e-8)
-                    avg_progress_accuracy = (progress_accuracy_ref_sim + progress_accuracy_ref_diff) / 2.0
-                    outputs_dict[f"{prefix}/sim_prog_accuracy"] = avg_progress_accuracy.item()
-                    outputs_dict[f"{prefix}/sim_prog_accuracy_ref_sim"] = progress_accuracy_ref_sim.item()
-                    outputs_dict[f"{prefix}/sim_prog_accuracy_ref_diff"] = progress_accuracy_ref_diff.item()
-
-                # Combine metrics from both ref_sim and ref_diff for stratification
-                # Average the metrics across both comparisons
-                combined_spearman_corr = (
-                    progress_metrics_ref_sim["masked_spearman_corr"] + progress_metrics_ref_diff["masked_spearman_corr"]
-                ) / 2.0
-                combined_prog_loss = (
-                    progress_metrics_ref_sim["masked_loss"] + progress_metrics_ref_diff["masked_loss"]
-                ) / 2.0
-
-                stratified_progress_metrics = {
-                    "spearman_corr": combined_spearman_corr,
-                    "prog_loss": combined_prog_loss,
-                }
-
-                self._add_stratified_metrics(
-                    outputs_dict,
-                    prefix,
-                    inputs["data_gen_strategy"],
-                    inputs["trajectory_A_data_source"],
-                    stratified_progress_metrics,
-                    target_progress_sim_A_mask,
-                )
-
-            # Add success loss metrics if computed
-            if self.config.model.train_success_head:
-                weighted_accuracy_ref_sim = success_metrics_ref_sim["weighted_accuracy"]
-                weighted_accuracy_ref_diff = success_metrics_ref_diff["weighted_accuracy"]
-                avg_weighted_accuracy = (weighted_accuracy_ref_sim + weighted_accuracy_ref_diff) / 2.0
-                # Use scalar versions for logging
-                positive_accuracy_scalar_ref_sim = success_metrics_ref_sim["positive_accuracy_scalar"]
-                positive_accuracy_scalar_ref_diff = success_metrics_ref_diff["positive_accuracy_scalar"]
-                avg_positive_accuracy = (positive_accuracy_scalar_ref_sim + positive_accuracy_scalar_ref_diff) / 2.0
-                negative_accuracy_scalar_ref_sim = success_metrics_ref_sim["negative_accuracy_scalar"]
-                negative_accuracy_scalar_ref_diff = success_metrics_ref_diff["negative_accuracy_scalar"]
-                avg_negative_accuracy = (negative_accuracy_scalar_ref_sim + negative_accuracy_scalar_ref_diff) / 2.0
-                success_loss_weight_ref_sim = success_metrics_ref_sim["success_loss_weight"]
-                success_loss_weight_ref_diff = success_metrics_ref_diff["success_loss_weight"]
-                avg_success_loss_weight = (success_loss_weight_ref_sim + success_loss_weight_ref_diff) / 2.0
-                outputs_dict.update({
-                    f"{prefix}/sim_success_loss": total_success_loss.item(),
-                    f"{prefix}/sim_success_loss_ref_sim": success_loss_ref_sim.item(),
-                    f"{prefix}/sim_success_loss_ref_diff": success_loss_ref_diff.item(),
-                    f"{prefix}/sim_success_accuracy": success_accuracy.item(),
-                    f"{prefix}/sim_success_auprc": success_auprc.item(),
-                    f"{prefix}/sim_weighted_success_accuracy": avg_weighted_accuracy.item()
-                    if torch.is_tensor(avg_weighted_accuracy)
-                    else avg_weighted_accuracy,
-                    f"{prefix}/sim_positive_success_accuracy": avg_positive_accuracy.item()
-                    if torch.is_tensor(avg_positive_accuracy)
-                    else avg_positive_accuracy,
-                    f"{prefix}/sim_negative_success_accuracy": avg_negative_accuracy.item()
-                    if torch.is_tensor(avg_negative_accuracy)
-                    else avg_negative_accuracy,
-                    f"{prefix}/sim_success_loss_weight": avg_success_loss_weight.item()
-                    if torch.is_tensor(avg_success_loss_weight)
-                    else avg_success_loss_weight,
-                })
-
-                # Combine metrics from both ref_sim and ref_diff for stratification
-                # Average the metrics across both comparisons
-                combined_success_loss = (
-                    success_metrics_ref_sim["masked_loss"] + success_metrics_ref_diff["masked_loss"]
-                ) / 2.0
-                combined_success_acc = (
-                    success_metrics_ref_sim["masked_correct"] + success_metrics_ref_diff["masked_correct"]
-                ) / 2.0
-                combined_positive_acc = (
-                    success_metrics_ref_sim["positive_accuracy"] + success_metrics_ref_diff["positive_accuracy"]
-                ) / 2.0
-                combined_negative_acc = (
-                    success_metrics_ref_sim["negative_accuracy"] + success_metrics_ref_diff["negative_accuracy"]
-                ) / 2.0
-
-                stratified_success_metrics = {
-                    "success_loss": combined_success_loss,
-                    "success_acc": combined_success_acc,
-                    "success_pos_acc": combined_positive_acc,
-                    "success_neg_acc": combined_negative_acc,
-                }
-
-                self._add_stratified_metrics(
-                    outputs_dict,
-                    prefix,
-                    inputs["data_gen_strategy"],
-                    inputs["trajectory_A_data_source"],
-                    stratified_success_metrics,
-                    target_progress_sim_A_mask,
-                )
-
-            # Add preference loss metrics if computed
-            if self.config.model.train_preference_head and self.config.training.predict_pref_sim:
-                if preference_loss_ref_diff is not None and preference_logits_ref_diff is not None:
-                    preference_labels_ref_diff = inputs.get("preference_labels_ref_diff")
-                    if preference_labels_ref_diff is not None:
-                        preference_scores_ref_diff = torch.clamp(preference_logits_ref_diff, min=-50.0, max=50.0)
-                        preference_probs_ref_diff = torch.sigmoid(preference_scores_ref_diff)
-                        preference_predictions_ref_diff = (preference_probs_ref_diff > 0.5).float()
-                        preference_accuracy_ref_diff = (
-                            preference_predictions_ref_diff == preference_labels_ref_diff
-                        ).float()
-
-                        outputs_dict.update({
-                            f"{prefix}/sim_pref_loss": preference_loss_ref_diff.item(),
-                            f"{prefix}/sim_pref_accuracy": preference_accuracy_ref_diff.mean().item(),
-                        })
-
-            return final_loss, outputs_dict
-
-        return final_loss

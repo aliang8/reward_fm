@@ -3,12 +3,12 @@
 import numpy as np
 import torch
 
-from .rfm_heads import RFMBatchCollator
+from .rbm_heads import RBMBatchCollator
 from .utils import convert_frames_to_pil_images
 from robometer.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
 
 
-class ReWiNDBatchCollator(RFMBatchCollator):
+class ReWiNDBatchCollator(RBMBatchCollator):
     def _process_preference_batch(self, preference_samples: list[PreferenceSample]) -> dict[str, torch.Tensor]:
         """Process a batch of preference samples."""
         # During inference, keep original order (chosen=A, rejected=B)

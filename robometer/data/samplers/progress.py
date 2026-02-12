@@ -4,7 +4,7 @@ import random
 import torch
 
 from robometer.data.dataset_types import ProgressSample, Trajectory
-from robometer.data.samplers.base import RFMBaseSampler
+from robometer.data.samplers.base import RBMBaseSampler
 from robometer.data.datasets.helpers import (
     DataGenStrat,
     load_embeddings_from_path,
@@ -16,7 +16,7 @@ from robometer.utils.logger import get_logger
 logger = get_logger()
 
 
-class ProgressSampler(RFMBaseSampler):
+class ProgressSampler(RBMBaseSampler):
     """Data generator for progress samples."""
 
     def __init__(self, is_evaluation=False, **kwargs):

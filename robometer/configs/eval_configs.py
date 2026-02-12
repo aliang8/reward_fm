@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Evaluation configuration for RFM.
+Evaluation configuration for RBM.
 This file contains evaluation configuration classes:
 - EvalServerConfig: For evaluation server runs (eval_server.py)
 - OfflineEvalConfig: For standalone evaluation runs (run_eval_only.py)
@@ -148,11 +148,11 @@ class VLACConfig:
 
 
 @dataclass
-class RFMConfig:
-    """Configuration for RFM/ReWiND baseline model."""
+class RBMConfig:
+    """Configuration for RBM/ReWiND baseline model."""
     batch_size: int = field(
         default=32,
-        metadata={"help": "Batch size for RFM/ReWiND model inference"},
+        metadata={"help": "Batch size for RBM/ReWiND model inference"},
     )
 
 
@@ -248,8 +248,8 @@ class BaselineEvalConfig:
                 self.model_config = GVLConfig(**(self.model_config or {}))
             elif self.reward_model == "vlac":
                 self.model_config = VLACConfig(**(self.model_config or {}))
-            elif self.reward_model in ["rfm", "rewind"]:
-                self.model_config = RFMConfig(**(self.model_config or {}))
+            elif self.reward_model in ["rfm", "rewind", "rbm"]:
+                self.model_config = RBMConfig(**(self.model_config or {}))
             elif self.reward_model == "roboreward":
                 self.model_config = RoboRewardConfig(**(self.model_config or {}))
             elif self.reward_model == "robodopamine":

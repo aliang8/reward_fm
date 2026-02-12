@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Shared setup utilities for RFM training.
+Shared setup utilities for RBM training.
 This file contains setup functions that can be reused across different training scripts.
 """
 
@@ -44,15 +44,15 @@ from robometer.configs.experiment_configs import (
     PEFTConfig,
     TrainingConfig,
 )
-from robometer.data.collators import BaseCollator, ReWiNDBatchCollator, RFMBatchCollator, VQABatchCollator
+from robometer.data.collators import BaseCollator, ReWiNDBatchCollator, RBMBatchCollator
 from robometer.data.datasets import (
-    RFMDataset,
+    RBMDataset,
     StrategyFirstDataset,
     BaseDataset,
     RepeatedDataset,
 )
 from robometer.data.datasets.custom_eval import CustomEvalDataset
-from robometer.models import RFM, RFMVQA, ReWiNDTransformer, ReWINDTransformerConfig
+from robometer.models import RBM, ReWiNDTransformer, ReWINDTransformerConfig
 from robometer.utils.logger import get_logger
 
 logger = get_logger()
@@ -145,7 +145,7 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
         logger.debug(f"Sample model adapter keys: {model_adapter_keys[:3]}")
     
     # Remap checkpoint keys to match model structure
-    # For PEFT models wrapped in RFM: checkpoint has "model.model." but model expects "model.base_model.model.model."
+    # For PEFT models wrapped in RBM: checkpoint has "model.model." but model expects "model.base_model.model.model."
     # Try multiple strategies: direct match, map "model.model." -> "model.base_model.model.model.", etc.
     remapped_state_dict = {}
     remapped_count = 0
@@ -161,7 +161,7 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
             # Try different remapping strategies
             potential_keys = []
             
-            # Strategy 1 (PEFT): Map "model.model." -> "model.base_model.model.model." (for PEFT wrapped in RFM)
+            # Strategy 1 (PEFT): Map "model.model." -> "model.base_model.model.model." (for PEFT wrapped in RBM)
             # This handles the case where Unsloth saved the full model from model.model
             if ckpt_key.startswith("model.model."):
                 # For PEFT: model.model.* -> model.base_model.model.model.*
@@ -293,7 +293,7 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
                 # Try remapping strategies to find the actual key used in model
                 potential_keys = []
                 if ckpt_key.startswith("model.model."):
-                    # Strategy 1: PEFT wrapped in RFM
+                    # Strategy 1: PEFT wrapped in RBM
                     potential_keys.append(ckpt_key.replace("model.model.", "model.base_model.model.model.", 1))
                     # Strategy 2: Fallback
                     potential_keys.append(ckpt_key.replace("model.model.", "model.", 1))
@@ -374,7 +374,7 @@ def _load_base_model_with_unsloth(
             bias=peft_config.bias,
         )
 
-    # Extract inner model after PEFT is applied (if needed for RFM wrapper)
+    # Extract inner model after PEFT is applied (if needed for RBM wrapper)
     # IMPORTANT: After FastVisionModel.get_peft_model(), base_model.model should be a PeftModel
     # We keep it as PeftModel so we can use PeftModel.from_pretrained() later
     if cfg.model_type == "default":
@@ -422,12 +422,11 @@ def _load_base_model_standard(
             **extra_kwargs,
             quantization_config=bnb,
         )
-        if cfg.model_type == "default":
-            # For RFM (non-VQA), extract the base model
-            base_model = base_model.model
+        # Extract the base model for RBM
+        base_model = base_model.model
         logger.info("Using Molmo2 models")
     elif is_qwen3:
-        qwen_model_cls = Qwen3VLModel if cfg.model_type == "default" else Qwen3VLForConditionalGeneration
+        qwen_model_cls = Qwen3VLModel
         base_model = qwen_model_cls.from_pretrained(
             cfg.base_model_id,
             torch_dtype=torch_dtype,
@@ -488,37 +487,32 @@ def _setup_processor_and_tokenizer(cfg: ModelConfig) -> AutoProcessor:
 
 def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, base_model: Any) -> None:
     """
-    Add RFM special tokens and resize token embeddings if needed.
+    Add RBM special tokens and resize token embeddings if needed.
 
     Args:
         cfg: Model configuration
         processor: Processor with tokenizer
         base_model: Base model to resize embeddings for
     """
-    # Add RFM special tokens if they don't exist
-    if cfg.model_type != "vqa":
-        special_tokens = [
-            "<|split_token|>",
-            "<|reward_token|>",
-            "<|pref_token|>",
-            "<|sim_token|>",
-            # "<|prog_token_A|>",
-            # "<|prog_token_B|>",
-            # "<|success_token_A|>",
-            # "<|success_token_B|>",
-            "<|prog_token|>",  # Per-frame progress token
-        ]
-        logger.info(f"Before adding special tokens: {len(processor.tokenizer.get_vocab())}")
-        num_added = 0
-        for token in special_tokens:
-            if token not in processor.tokenizer.get_vocab():
-                added = processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
-                num_added += added
+    # Add RBM special tokens if they don't exist
+    special_tokens = [
+        "<|split_token|>",
+        "<|reward_token|>",
+        "<|pref_token|>",
+        "<|sim_token|>",
+        "<|prog_token|>",  # Per-frame progress token
+    ]
+    logger.info(f"Before adding special tokens: {len(processor.tokenizer.get_vocab())}")
+    num_added = 0
+    for token in special_tokens:
+        if token not in processor.tokenizer.get_vocab():
+            added = processor.tokenizer.add_special_tokens({"additional_special_tokens": [token]})
+            num_added += added
 
-        logger.info(f"Added {num_added} special tokens")
+    logger.info(f"Added {num_added} special tokens")
 
-        base_model.resize_token_embeddings(len(processor.tokenizer))
-        logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
+    base_model.resize_token_embeddings(len(processor.tokenizer))
+    logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
 
         # import ipdb; ipdb.set_trace()
         # # Resize token embeddings if new tokens were added
@@ -617,8 +611,6 @@ def _verify_checkpoint_loading(cfg: ModelConfig, model: Any, before_weights: dic
         model: The model after loading checkpoint
         before_weights: Dictionary of weights before loading (keys: visual, progress_head, lm_embed_tokens, lm_layer)
     """
-    if cfg.model_type == "vqa":
-        return
 
     if "Qwen2.5" in cfg.base_model_id:
         after_visual = model.model.visual.blocks[0].mlp.down_proj.weight
@@ -666,7 +658,7 @@ def _verify_checkpoint_loading(cfg: ModelConfig, model: Any, before_weights: dic
 
 def setup_model_and_processor(
     cfg: ModelConfig, hf_model_id: str = "", peft_config: PEFTConfig = None
-) -> tuple[AutoProcessor, RFM]:
+) -> tuple[AutoProcessor, RBM]:
     """
     Shared function to set up model, processor, and tokenizer for both training and evaluation.
 
@@ -737,7 +729,7 @@ def setup_model_and_processor(
                 **extra_kwargs,
                 quantization_config=bnb,
             )
-            model_cls = RFM if cfg.model_type == "default" else RFMVQA
+            model_cls = RBM
 
         elif "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
             # Load base model (with or without Unsloth)
@@ -749,7 +741,7 @@ def setup_model_and_processor(
                 base_model = _load_base_model_standard(cfg, torch_dtype, extra_kwargs, bnb)
                 tokenizer = None  # Will be loaded with processor
 
-            model_cls = RFM if cfg.model_type == "default" else RFMVQA
+            model_cls = RBM
 
             # Setup processor and tokenizer
             processor = _setup_processor_and_tokenizer(cfg)
@@ -759,7 +751,7 @@ def setup_model_and_processor(
         else:
             raise ValueError(f"Invalid base model id: {cfg.base_model_id}")
 
-        # CRITICAL: Ensure PEFT is applied to base_model BEFORE wrapping in RFM
+        # CRITICAL: Ensure PEFT is applied to base_model BEFORE wrapping in RBM
         # This is necessary because we need the PeftModel structure to load adapter weights from checkpoint
         if cfg.use_peft and not isinstance(base_model, PeftModel):
             logger.warning("PEFT is enabled but base_model is not a PeftModel. Applying PEFT now...")
@@ -776,7 +768,7 @@ def setup_model_and_processor(
                 bias=peft_config.bias,
             )
             base_model = get_peft_model(base_model, lora_config)
-            logger.info("Applied PEFT to base_model before wrapping in RFM")
+            logger.info("Applied PEFT to base_model before wrapping in RBM")
 
         # Verify PEFT was applied correctly if needed
         if cfg.use_peft:
@@ -789,8 +781,8 @@ def setup_model_and_processor(
         # Add special tokens and resize embeddings
         _add_special_tokens_and_resize(cfg, processor, base_model)
 
-        # Initialize RFM model wrapper with the pre-loaded base model
-        logger.info("Initializing RFM model...")
+        # Initialize RBM model wrapper with the pre-loaded base model
+        logger.info("Initializing RBM model...")
         tokenizer = processor.tokenizer
 
         model = model_cls(
@@ -799,7 +791,7 @@ def setup_model_and_processor(
             tokenizer=tokenizer,
             base_model=base_model,
             base_model_id=cfg.base_model_id,
-            model_config=cfg,  # Pass ModelConfig for RFM-specific settings
+            model_config=cfg,  # Pass ModelConfig for RBM-specific settings
         )
 
         # Load checkpoint if provided
@@ -820,7 +812,7 @@ def setup_model_and_processor(
                     logger.error("CRITICAL: model.model is not a PeftModel! Cannot load adapter weights.")
                     raise ValueError(
                         "model.model is not a PeftModel. "
-                        "This should not happen if PEFT was applied correctly before wrapping in RFM."
+                        "This should not happen if PEFT was applied correctly before wrapping in RBM."
                     )
                 
                 # Check if adapter files exist first (indicates checkpoint was saved in PEFT format)
@@ -854,21 +846,20 @@ def setup_model_and_processor(
                 # For non-PEFT models, we can use from_pretrained as before
                 # Capture before weights for verification
                 before_weights = {}
-                if cfg.model_type != "vqa":
-                    if "Qwen2.5" in cfg.base_model_id:
-                        before_weights = {
-                            "visual": model.model.visual.blocks[0].mlp.down_proj.weight,
-                            "progress_head": model.progress_head[0].weight,
-                            "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
-                            "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
-                        }
-                    elif "Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
-                        before_weights = {
-                            "visual": model.model.visual.blocks[0].mlp.linear_fc1.weight,
-                            "progress_head": model.progress_head[0].weight,
-                            "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
-                            "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
-                        }
+                if "Qwen2.5" in cfg.base_model_id:
+                    before_weights = {
+                        "visual": model.model.visual.blocks[0].mlp.down_proj.weight,
+                        "progress_head": model.progress_head[0].weight,
+                        "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
+                        "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
+                    }
+                elif "Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
+                    before_weights = {
+                        "visual": model.model.visual.blocks[0].mlp.linear_fc1.weight,
+                        "progress_head": model.progress_head[0].weight,
+                        "lm_embed_tokens": model.model.language_model.embed_tokens.weight,
+                        "lm_layer": model.model.language_model.layers[0].mlp.up_proj.weight,
+                    }
 
                 # Load the model from the evaluation path
                 model = model_cls.from_pretrained(
@@ -956,7 +947,7 @@ def setup_model_and_processor(
             elif "preference_head" in name:
                 param.requires_grad = cfg.train_preference_head
             elif "similarity_head" in name:
-                param.requires_grad = cfg.train_similarity_head
+                param.requires_grad = getattr(cfg, "train_similarity_head", False)
         
         # 2. Handle base model parameters (vision/language) - skip if PEFT is applied
         elif is_base_model_param(name):
@@ -974,10 +965,10 @@ def setup_model_and_processor(
         
         # 3. Handle special cases
         elif "lm_head" in name:
-            # Language modeling head should not be trainable for RFM
+            # Language modeling head should not be trainable for RBM
             param.requires_grad = False
         
-        # 4. All other parameters (custom RFM parameters like frame_pool_attn, video_proj, text_proj)
+        # 4. All other parameters (custom RBM parameters like frame_pool_attn, video_proj, text_proj)
         # should always be trainable
         else:
             param.requires_grad = True
@@ -988,7 +979,7 @@ def setup_model_and_processor(
     logger.info(f"  - Progress head: {cfg.train_progress_head}")
     logger.info(f"  - Success head: {getattr(cfg, 'train_success_head', False)}")
     logger.info(f"  - Preference head: {cfg.train_preference_head}")
-    logger.info(f"  - Similarity head: {cfg.train_similarity_head}")
+    logger.info(f"  - Similarity head: {getattr(cfg, 'train_similarity_head', False)}")
 
     for name, param in model.named_parameters():
         if param.requires_grad:
@@ -1002,7 +993,7 @@ def setup_model_and_processor(
     return tokenizer, processor, model
 
 
-def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
+def setup_peft_model(rbm_model: RBM, cfg: PEFTConfig) -> RBM:
     """Shared function to apply PEFT configuration to the model"""
 
     logger.info("Using PEFT/LoRA training...")
@@ -1016,15 +1007,15 @@ def setup_peft_model(rfm_model: RFM, cfg: PEFTConfig) -> RFM:
     if cfg.peft_vision_encoder:
         # vision backbone is frozen, but we can still train the LoRA parameters
         logger.info("Attaching LoRA to only the vision encoder...")
-        rfm_model.base_model.model.visual = get_peft_model(rfm_model.base_model.model.visual, lora_config)
+        rbm_model.base_model.model.visual = get_peft_model(rbm_model.base_model.model.visual, lora_config)
 
     # Count trainable parameters manually - defer printing until after FSDP setup
-    trainable_params = sum(p.numel() for p in rfm_model.parameters() if p.requires_grad)
-    all_params = sum(p.numel() for p in rfm_model.parameters())
+    trainable_params = sum(p.numel() for p in rbm_model.parameters() if p.requires_grad)
+    all_params = sum(p.numel() for p in rbm_model.parameters())
     logger.info(
         f"AFTER PEFT: trainable params: {trainable_params:,} || all params: {all_params:,} || trainable%: {100 * trainable_params / all_params:.4f}"
     )
-    return rfm_model
+    return rbm_model
 
 
 def create_training_arguments(cfg: TrainingConfig, output_dir: str, is_eval: bool = False) -> TrainingArguments:
@@ -1100,7 +1091,8 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, sampler_kwargs=None, *
         **kwargs: Additional keyword arguments to pass to dataset
     """
     dataset_cls = {
-        "rfm": RFMDataset,
+        "rbm": RBMDataset,
+        "rfm": RBMDataset,  # backward compat
         "strategy_first": StrategyFirstDataset,
     }
 
@@ -1158,10 +1150,7 @@ def setup_batch_collator(
         )
 
     if "Qwen" in cfg.model.base_model_id or "SmolVLM" in cfg.model.base_model_id or "Molmo" in cfg.model.base_model_id:
-        if cfg.model.model_type == "default":
-            batch_collator = RFMBatchCollator(**collator_kwargs)
-        elif cfg.model.model_type == "vqa":
-            batch_collator = VQABatchCollator(**collator_kwargs)
+        batch_collator = RBMBatchCollator(**collator_kwargs)
     # elif "rewind_transformer" in cfg.model.base_model_id:
     elif "rewind" in cfg.model.base_model_id:
         batch_collator = ReWiNDBatchCollator(

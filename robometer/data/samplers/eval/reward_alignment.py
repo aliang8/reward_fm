@@ -20,7 +20,7 @@ from robometer.utils.logger import get_logger
 logger = get_logger()
 
 
-class RewardAlignmentSampler(RFMBaseSampler):
+class RewardAlignmentSampler(RBMBaseSampler):
     """
     Data generator that creates subsequence samples for reward alignment evaluation.
 

@@ -1,4 +1,5 @@
-# Robometer: Scalable Reward Modeling with Progress + Preference
+# Robometer: Scaling General-Purpose Robotic
+Reward Models via Trajectory Comparisons
 
 [![arXiv](https://img.shields.io/badge/arXiv-Coming%20Soon-b31b1b.svg)](https://arxiv.org/)
 [![GitHub](https://img.shields.io/badge/GitHub-reward__fm-181717?logo=github)](https://github.com/aliang8/reward_fm)
@@ -46,7 +47,7 @@ reward_fm/
 │   ├── data/               # Datasets and preprocessing
 │   ├── configs/            # Hydra and experiment configs
 │   ├── models/             # Model definitions
-│   └── evals/              # Baseline evals (GVL, VLAC, Robometer, etc.)
+│   └── evals/              # Baseline evals (GVL, VLAC, Robodopamine, etc.)
 ├── eval_commands/          # Shell scripts for baseline evals
 ├── train.py                # Training entrypoint
 └── pyproject.toml          # Dependencies (uv)
@@ -92,18 +93,12 @@ Detailed baseline eval docs: [robometer/evals/README.md](robometer/evals/README.
 
 ---
 
-## 🏋️ Training and evaluation
+## 🏋️ Training
 
 ### Training
 
 ```bash
 uv run accelerate launch --config_file robometer/configs/fsdp.yaml train.py --config_path=robometer/configs/config.yaml
-```
-
-### Evaluation (train script)
-
-```bash
-uv run accelerate launch --config_file robometer/configs/fsdp.yaml train.py --mode=evaluate
 ```
 
 ### Baseline evaluation (all models)

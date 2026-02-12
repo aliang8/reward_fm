@@ -17,13 +17,11 @@ Response payload per request contains predictions grouped by head:
   {
     "outputs_preference": {...},   # Preference logits + optional progress traces
     "outputs_progress": {...},     # Progress-only trajectories
-    "outputs_similarity": {...},   # Similarity logits (if requested)
   }
 """
 
 from __future__ import annotations
 
-import ast
 import asyncio
 import copy
 import io
@@ -46,14 +44,13 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from robometer.evals.eval_utils import (
-    extract_answer_from_text,
     parse_npy_form_data,
     reconstruct_payload_from_npy,
 )
 from robometer.utils.save import load_model_from_hf
 from robometer.configs.eval_configs import EvalServerConfig
 from robometer.configs.experiment_configs import ExperimentConfig
-from robometer.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
+from robometer.data.dataset_types import PreferenceSample, ProgressSample
 from robometer.utils.setup_utils import setup_model_and_processor, setup_batch_collator
 from robometer.models.utils import ModelOutput, convert_bins_to_continuous, convert_bins_to_continuous_hard
 from robometer.utils.config_utils import display_config, convert_hydra_to_dataclass
@@ -153,7 +150,7 @@ def aggregate_frame_step_predictions(
 def forward_model(
     model: Any, batch_inputs: Dict[str, Any], sample_type: str = "progress"
 ) -> Tuple[ModelOutput, Dict[str, Any]]:
-    """Forward pass that mirrors trainer logic (handles ReWiND vs RFM)."""
+    """Forward pass that mirrors trainer logic (handles ReWiND vs RBM)."""
     with torch.no_grad():
         if "rewind" in model.__class__.__name__.lower():
             model_output, extra = model(
@@ -198,7 +195,7 @@ def process_batch_helper(
 
     input_samples: List[Any] = []
     for sample in batch_data:
-        if isinstance(sample, (PreferenceSample, ProgressSample, SimilaritySample)):
+        if isinstance(sample, (PreferenceSample, ProgressSample)):
             input_samples.append(sample)
         elif isinstance(sample, dict):
             sample_type = sample.get("sample_type")
@@ -206,8 +203,6 @@ def process_batch_helper(
                 input_samples.append(PreferenceSample(**sample))
             elif sample_type == "progress":
                 input_samples.append(ProgressSample(**sample))
-            elif sample_type == "similarity":
-                input_samples.append(SimilaritySample(**sample))
             else:
                 raise ValueError(f"Unsupported sample_type: {sample_type}")
         else:
@@ -288,48 +283,28 @@ def process_batch_helper(
     for key, value in batch_inputs["progress_inputs"].items():
         if isinstance(value, torch.Tensor):
             batch_inputs["progress_inputs"][key] = value.to(device)
-    for key, value in batch_inputs["similarity_inputs"].items():
-        if isinstance(value, torch.Tensor):
-            batch_inputs["similarity_inputs"][key] = value.to(device)
-
     outputs_preference = None
     outputs_progress = None
-    outputs_similarity = None
     outputs_success = None
 
     num_preferences = batch_inputs.get("num_preferences", 0)
     num_progress = batch_inputs.get("num_progress", 0)
-    num_similarities = batch_inputs.get("num_similarities", 0)
     logger.debug(
-        f"[job {job_id}] Batch counts — preference: {num_preferences} "
-        f"progress: {num_progress} similarity: {num_similarities}"
+        f"[job {job_id}] Batch counts — preference: {num_preferences} progress: {num_progress}"
     )
 
     if num_preferences > 0:
-        if model_type == "vqa":
-            outputs_preference = compute_batch_outputs_vqa(
-                model,
-                tokenizer,
-                batch_inputs["preference_inputs"],
-                mode="preference",
-            )
-        else:
-            outputs_preference = compute_batch_outputs(
-                model,
-                tokenizer,
-                batch_inputs["preference_inputs"],
-                sample_type="preference",
-                is_discrete_mode=is_discrete_mode,
-                num_bins=num_bins,
-            )
+        outputs_preference = compute_batch_outputs(
+            model,
+            tokenizer,
+            batch_inputs["preference_inputs"],
+            sample_type="preference",
+            is_discrete_mode=is_discrete_mode,
+            num_bins=num_bins,
+        )
 
     if num_progress > 0:
-        if model_type == "vqa":
-            outputs_progress = compute_batch_outputs_vqa(
-                model, tokenizer, batch_inputs["progress_inputs"], mode="progress"
-            )
-        else:
-            outputs_progress = compute_batch_outputs(
+        outputs_progress = compute_batch_outputs(
                 model,
                 tokenizer,
                 batch_inputs["progress_inputs"],
@@ -347,23 +322,10 @@ def process_batch_helper(
             if outputs_success is not None:
                 outputs_success = outputs_progress.pop("outputs_success", None)
 
-    if num_similarities > 0:
-        if model_type == "vqa":
-            raise ValueError("Similarity evaluation is not supported for VQA model type.")
-        outputs_similarity = compute_batch_outputs(
-            model,
-            tokenizer,
-            batch_inputs["similarity_inputs"],
-            sample_type="similarity",
-            is_discrete_mode=is_discrete_mode,
-            num_bins=num_bins,
-        )
-
     return {
         "outputs_preference": outputs_preference,
         "outputs_progress": outputs_progress,
         "outputs_success": outputs_success,
-        "outputs_similarity": outputs_similarity,
     }
 
 
@@ -566,14 +528,13 @@ def compute_batch_outputs(
     num_bins: int = 10,
 ) -> Dict[str, Any]:
     """
-    Run a forward pass for non-VQA models and return the raw head outputs we
-    need for eval logging.
+    Run a forward pass and return the raw head outputs we need for eval logging.
 
     Args:
-        model: RFM/ReWiND model on the target device.
-        tokenizer: Included for parity with the VQA helper (unused here).
+        model: RBM/ReWiND model on the target device.
+        tokenizer: Tokenizer (unused for head-based inference).
         batch_inputs: Collated inputs for the requested head.
-        sample_type: One of {"preference","progress","similarity"}.
+        sample_type: One of {"preference","progress"}.
 
     Returns:
         Dict containing logits/derived predictions keyed by head.
@@ -634,136 +595,7 @@ def compute_batch_outputs(
             }
             # logger.debug(f"success_probs: {success_probs}")
 
-    # Similarity logits
-    if sample_type == "similarity" and model_output.sim_logits is not None:
-        sim_logits = model_output.sim_logits
-        if isinstance(sim_logits, torch.Tensor):
-            sim_tensor = sim_logits.squeeze(-1)
-        elif isinstance(sim_logits, list):
-            sim_tensor = torch.stack(sim_logits).squeeze(-1)
-        else:
-            sim_tensor = None
-
-        sim_scores_list: List[float] = []
-        if sim_tensor is not None:
-            sim_scores_list = sim_tensor.detach().cpu().flatten().tolist()
-
-        num_samples = len(batch_inputs.get("task", []))
-
-        # Eval server is always in inference mode (only ref_sim, no ref_diff)
-        # In inference mode, batch structure is [ref_sim_0, ref_sim_1, ...]
-        # Assert that we have one score per sample (inference mode)
-        if num_samples > 0:
-            assert len(sim_scores_list) == num_samples, (
-                f"Expected {num_samples} similarity scores (inference mode: one per sample), "
-                f"but got {len(sim_scores_list)} scores. This suggests the collator is not in inference mode."
-            )
-        elif sim_scores_list:
-            # Infer num_samples from list length (should be 1:1 ratio in inference mode)
-            num_samples = len(sim_scores_list)
-            assert num_samples % 2 != 0 or num_samples == 0, (
-                f"Got {num_samples} scores which is even - this suggests training mode structure. "
-                f"Eval server should always be in inference mode (one score per sample)."
-            )
-
-        sim_score_ref_sim: List[Optional[float]] = []
-
-        # Inference mode: one score per sample (only ref_sim)
-        for i in range(num_samples):
-            sim_score_ref_sim.append(sim_scores_list[i] if i < len(sim_scores_list) else None)
-
-        results.update({
-            "sim_score_ref_sim": sim_score_ref_sim,
-            "task": batch_inputs.get("task", []),
-            "data_source": batch_inputs.get("data_source", []),
-            "data_gen_strategy": batch_inputs.get("data_gen_strategy", []),
-            "metadata": batch_inputs.get("metadata", []),
-        })
-
-        # logger.debug(f"sim_score_ref_sim: {sim_score_ref_sim}")
-        # logger.debug(f"task: {batch_inputs.get('task', [])}")
-        # logger.debug(f"data_source: {batch_inputs.get('data_source', [])}")
-        # logger.debug(f"data_gen_strategy: {batch_inputs.get('data_gen_strategy', [])}")
-
     return results
-
-
-def compute_batch_outputs_vqa(
-    model: Any, tokenizer: Any, batch_inputs: Dict[str, torch.Tensor], mode: str = "preference"
-) -> Dict[str, Any]:
-    """
-    Generate text answers for VQA-style models and post-process into numeric
-    predictions so downstream aggregation matches the non-VQA path.
-
-    Args:
-        model: VQA model (e.g., Qwen VQA variant).
-        tokenizer: Associated tokenizer for decoding.
-        batch_inputs: Collated inputs including prompt tokens/images.
-        mode: "preference" or "progress" depending on the head requested.
-
-    Returns:
-        Dict containing parsed predictions for the requested mode.
-    """
-    model.eval()
-    device = next(model.parameters()).device
-
-    input_ids = batch_inputs["input_ids"].to(device)
-    attention_mask = batch_inputs["attention_mask"].to(device)
-    pixel_values = (
-        batch_inputs.get("pixel_values", None).to(device) if batch_inputs.get("pixel_values") is not None else None
-    )
-    pixel_values_videos = (
-        batch_inputs.get("pixel_values_videos", None).to(device)
-        if batch_inputs.get("pixel_values_videos") is not None
-        else None
-    )
-    image_grid_thw = (
-        batch_inputs.get("image_grid_thw", None).to(device) if batch_inputs.get("image_grid_thw") is not None else None
-    )
-    video_grid_thw = (
-        batch_inputs.get("video_grid_thw", None).to(device) if batch_inputs.get("video_grid_thw") is not None else None
-    )
-    input_to_model = {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask,
-        "pixel_values": pixel_values,
-        "pixel_values_videos": pixel_values_videos,
-        "image_grid_thw": image_grid_thw,
-        "video_grid_thw": video_grid_thw,
-    }
-
-    with torch.no_grad():
-        output_ids = model.generate(**input_to_model, max_new_tokens=1024)
-        generated_ids = [
-            output_ids[len(input_ids) :] for input_ids, output_ids in zip(input_ids, output_ids, strict=False)
-        ]
-        generated_texts = tokenizer.batch_decode(
-            generated_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
-        )
-    logger.debug(f"VQA generated {len(generated_texts)} sequences (mode={mode})")
-
-    if mode == "preference":
-        predictions = [extract_answer_from_text(text) for text in generated_texts]
-        predictions_num_labels = []
-        for prediction in predictions:
-            if prediction == "A":
-                predictions_num_labels.append(1)
-            elif prediction == "B":
-                predictions_num_labels.append(0)
-            else:
-                predictions_num_labels.append(-1)
-        return {
-            "predictions": predictions_num_labels,
-            "preference_labels": batch_inputs.get("preference_labels").detach().cpu().tolist(),
-        }
-    elif mode == "progress":
-        progress_predictions = [extract_answer_from_text(text) for text in generated_texts]
-        progress_predictions = [ast.literal_eval(prediction) for prediction in progress_predictions]
-        return {
-            "progress_pred_A": progress_predictions,
-        }
-    else:
-        raise ValueError(f"Mode {mode} not supported")
 
 
 def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | None = None):
@@ -811,7 +643,7 @@ def create_app(cfg: EvalServerConfig, multi_gpu_server: MultiGPUEvalServer | Non
         else:
             use_frame_steps = str(use_frame_steps_value).lower() == "true"
 
-        # Reconstruct the original payload structure (RFM needs torch tensor conversion for embeddings)
+        # Reconstruct the original payload structure (RBM needs torch tensor conversion for embeddings)
         batch_data = reconstruct_payload_from_npy(
             numpy_arrays,
             other_data,

@@ -21,7 +21,7 @@ class StrategyFirstDataset(BaseDataset):
     """
     Dataset that first selects sample type, then strategy, then picks a data source uniformly.
 
-    This is different from RFMDataset which selects a trajectory first based on dataset iteration,
+    This is different from RBMDataset which selects a trajectory first based on dataset iteration,
     and from StrategyBalancedDataset which selects sample type then data source (with optional weights).
 
     Sampling flow:

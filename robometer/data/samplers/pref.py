@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Any
 import random
 
 from robometer.data.dataset_types import PreferenceSample, Trajectory
-from robometer.data.samplers.base import RFMBaseSampler
+from robometer.data.samplers.base import RBMBaseSampler
 from robometer.data.datasets.helpers import (
     DataGenStrat,
     convert_continuous_to_discrete_bins,
@@ -19,7 +19,7 @@ from robometer.utils.timer import timer
 logger = get_logger()
 
 
-class PrefSampler(RFMBaseSampler):
+class PrefSampler(RBMBaseSampler):
     """Data generator for producing batches of preference prediction data."""
 
     def __init__(self, is_evaluation=False, **kwargs):

@@ -1,5 +1,4 @@
 from .rewind_trainer import ReWiNDTrainer
-from .rfm_heads_trainer import RFMHeadsTrainer
-from .vqa_trainer import RFMVQATrainer
+from .rbm_heads_trainer import RBMHeadsTrainer
 
-__all__ = ["RFMHeadsTrainer", "RFMVQATrainer", "ReWiNDTrainer"]
+__all__ = ["RBMHeadsTrainer", "ReWiNDTrainer"]

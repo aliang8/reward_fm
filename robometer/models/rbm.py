@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-RFM (Reward Foundation Model) implementation.
-Contains the RFM class with three prediction heads for different objectives.
+Robometer implementation.
+Contains the RBM class with three prediction heads for different objectives.
 
 Note: make sure that the forward pass uses all of the
 heads or there will be some problems with FSDP sharding.
@@ -34,8 +34,8 @@ def squeeze_last_safe(x: torch.Tensor) -> torch.Tensor:
     return x
 
 
-class RFM(PredictionHeadsMixin, PreTrainedModel):
-    """Reward Foundation Model with three prediction heads for different objectives.
+class RBM(PredictionHeadsMixin, PreTrainedModel):
+    """Reward Behavior Model with three prediction heads for different objectives.
 
     Supports multiple base model architectures:
     - Qwen2.5-VL (Qwen2_5_VLModel)
@@ -85,7 +85,6 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         self.model_dtype = self.model.dtype
         self.progress_head = self.progress_head.to(dtype=self.model_dtype)
         self.preference_head = self.preference_head.to(dtype=self.model_dtype)
-        self.similarity_head = self.similarity_head.to(dtype=self.model_dtype)
         self.success_head = self.success_head.to(dtype=self.model_dtype)
 
         self.processor = processor
@@ -426,7 +425,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             "pixel_values": pixel_values,
             **kwargs,
         }
-        with _timer("time/rfm_forward", timing_raw=timing_raw):
+        with _timer("time/rbm_forward", timing_raw=timing_raw):
             outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
 
         hidden_state = outputs.hidden_states[-1]  # [B, seq_len, hidden_dim]
@@ -444,10 +443,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             output.progress_logits = progress_logits
             output.success_logits = success_logits
             if pref_or_sim_logits is not None:
-                if sample_type == "preference":
-                    output.pref_logits = pref_or_sim_logits
-                else:
-                    output.sim_logits = pref_or_sim_logits
+                output.pref_logits = pref_or_sim_logits
         else:
             # Process frames normally
             with _timer("time/progress_logits", timing_raw=timing_raw):
@@ -455,14 +451,10 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             output.progress_logits = progress_logits
             output.success_logits = success_logits
 
-            # Handle preference/similarity tokens if needed
-            if sample_type in ["preference", "similarity"]:
-                token_name = "<|pref_token|>" if sample_type == "preference" else "<|sim_token|>"
-                token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, token_name)
-                if sample_type == "preference":
-                    output.pref_logits = self.preference_head(token_hidden)
-                else:
-                    output.sim_logits = self.similarity_head(token_hidden)
+            # Handle preference token if needed
+            if sample_type == "preference":
+                token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, "<|pref_token|>")
+                output.pref_logits = self.preference_head(token_hidden)
 
         return output, timing_raw
 
@@ -532,7 +524,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             "second_per_grid_ts": second_per_grid_ts,
             **kwargs,
         }
-        with _timer("time/rfm_forward", timing_raw=timing_raw):
+        with _timer("time/rbm_forward", timing_raw=timing_raw):
             # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
             is_qwen3 = "Qwen3" in self.base_model_id or (hasattr(self.model, "config") and "Qwen3" in str(type(self.model)))
             if is_qwen3:
@@ -556,10 +548,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             output.progress_logits = progress_logits
             output.success_logits = success_logits
             if pref_or_sim_logits is not None:
-                if sample_type == "preference":
-                    output.pref_logits = pref_or_sim_logits
-                else:
-                    output.sim_logits = pref_or_sim_logits
+                output.pref_logits = pref_or_sim_logits
         else:
             # Process frames normally
             vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|vision_start|>")
@@ -595,14 +584,10 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             output.progress_logits = progress_logits
             output.success_logits = success_logits
 
-            # Handle preference/similarity tokens if needed
-            if sample_type in ["preference", "similarity"]:
-                token_name = "<|pref_token|>" if sample_type == "preference" else "<|sim_token|>"
-                token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, token_name)
-                if sample_type == "preference":
-                    output.pref_logits = self.preference_head(token_hidden)
-                else:
-                    output.sim_logits = self.similarity_head(token_hidden)
+            # Handle preference token if needed
+            if sample_type == "preference":
+                token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, "<|pref_token|>")
+                output.pref_logits = self.preference_head(token_hidden)
 
         return output, timing_raw
 
@@ -630,7 +615,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             "image_num_crops": image_num_crops,
             **kwargs,
         }
-        with _timer("time/rfm_forward", timing_raw=timing_raw):
+        with _timer("time/rbm_forward", timing_raw=timing_raw):
             # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
             is_qwen3 = "Qwen3" in self.base_model_id or (hasattr(self.model, "config") and "Qwen3" in str(type(self.model)))
             if is_qwen3:
@@ -655,10 +640,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             output.progress_logits = progress_logits
             output.success_logits = success_logits
             if pref_or_sim_logits is not None:
-                if sample_type == "preference":
-                    output.pref_logits = pref_or_sim_logits
-                else:
-                    output.sim_logits = pref_or_sim_logits
+                output.pref_logits = pref_or_sim_logits
         else:
             # Process frames normally
             vision_start_token_id = self.processor.tokenizer.convert_tokens_to_ids("<low_res_im_start>")
@@ -671,14 +653,10 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             output.progress_logits = progress_logits
             output.success_logits = success_logits
 
-            # Handle preference/similarity tokens if needed
-            if sample_type in ["preference", "similarity"]:
-                token_name = "<|pref_token|>" if sample_type == "preference" else "<|sim_token|>"
-                token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, token_name)
-                if sample_type == "preference":
-                    output.pref_logits = self.preference_head(token_hidden)
-                else:
-                    output.sim_logits = self.similarity_head(token_hidden)
+            # Handle preference token if needed
+            if sample_type == "preference":
+                token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, "<|pref_token|>")
+                output.pref_logits = self.preference_head(token_hidden)
 
         return output, timing_raw
 
@@ -896,13 +874,13 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         sample_type: str,
     ) -> tuple[dict, dict, torch.Tensor | None]:
         """
-        Process token-based extraction for progress, preference, and similarity predictions.
+        Process token-based extraction for progress and preference predictions.
 
         Returns:
-            tuple: (progress_logits, success_logits, pref_or_sim_logits)
+            tuple: (progress_logits, success_logits, pref_logits)
                 - progress_logits: dict with "A" and/or "B" keys
                 - success_logits: dict with "A" and/or "B" keys
-                - pref_or_sim_logits: preference or similarity logits, or None
+                - pref_logits: preference logits, or None
         """
         progress_logits = {"A": None, "B": None}
         success_logits = {"A": None, "B": None}
@@ -915,9 +893,8 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             # For progress samples, all tokens belong to trajectory A
             hidden_states_A = all_prog_token_hidden
             progress_logits["A"], success_logits["A"] = self._apply_heads_to_hidden_states(hidden_states_A)
-        elif sample_type in ["preference", "similarity"]:
-            # For preference/similarity, assume equal number of tokens for A and B
-            # Split each batch item's tokens in half
+        elif sample_type == "preference":
+            # For preference, assume equal number of tokens for A and B
             hidden_states_A = []
             hidden_states_B = []
             for tokens in all_prog_token_hidden:
@@ -931,13 +908,8 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
             progress_logits["A"], success_logits["A"] = self._apply_heads_to_hidden_states(hidden_states_A)
             progress_logits["B"], success_logits["B"] = self._apply_heads_to_hidden_states(hidden_states_B)
 
-            token_name = "<|pref_token|>" if sample_type == "preference" else "<|sim_token|>"
-            token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, token_name)
-            # token_hidden is [B, hidden_dim] when exactly one token per sequence
-            if sample_type == "preference":
-                pref_or_sim_logits = self.preference_head(token_hidden)
-            else:
-                pref_or_sim_logits = self.similarity_head(token_hidden)
+            token_hidden = self._extract_hidden_state_from_token(hidden_state, input_ids, "<|pref_token|>")
+            pref_or_sim_logits = self.preference_head(token_hidden)
 
         return progress_logits, success_logits, pref_or_sim_logits
 
@@ -949,7 +921,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         pixel_values_videos=None,
         image_grid_thw=None,
         video_grid_thw=None,
-        sample_type=None,  # "preference", "progress", "similarity"
+        sample_type=None,  # "preference", "progress"
         second_per_grid_ts=None,
         timing_raw=None,
         # Molmo2-specific parameters
@@ -961,7 +933,7 @@ class RFM(PredictionHeadsMixin, PreTrainedModel):
         **kwargs,
     ):
         """
-        Forward pass for the RFM (Reward Foundation Model).
+        Forward pass for the RBM (Reward Behavior Model).
 
         Dispatches to model-specific forward methods:
         - SmolVLM: _forward_smolvlm

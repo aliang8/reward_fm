@@ -95,9 +95,8 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
             self.prog_token_A = nn.Parameter(torch.randn(1, rewind_config.max_len, rewind_config.hidden_dim))
             self.prog_token_B = nn.Parameter(torch.randn(1, rewind_config.max_len, rewind_config.hidden_dim))
 
-        # Prediction tokens
+        # Prediction token for preference
         self.preference_token = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
-        self.similarity_token = nn.Parameter(torch.randn(1, 1, rewind_config.hidden_dim))
 
     def forward(
         self,
@@ -106,7 +105,7 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
         pixel_values_videos=None,
         video_embeddings=None,
         text_embeddings=None,
-        sample_type=None,  # "preference", "similarity", "progress"
+        sample_type=None,  # "preference", "progress"
         timing_raw=None,
         **kwargs,
     ):
@@ -147,7 +146,7 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
 
         output = ModelOutput()
 
-        if sample_type == "preference" or sample_type == "similarity":
+        if sample_type == "preference":
             half = T // 2
             video_embeddings_A = video_embeddings[:, :half].clone()
             video_embeddings_B = video_embeddings[:, half:].clone()
@@ -179,10 +178,7 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
                     sequence_B.append(prog_token_B[:, i : i + 1, :])  # [B, 1, D]
 
                 # Prediction token
-                if sample_type == "preference":
-                    pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)
-                else:
-                    pred_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)
+                pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)
 
                 # Concatenate: [text, frame1_A, prog_A, frame2_A, prog_A, ..., frame1_B, prog_B, frame2_B, prog_B, ..., pred]
                 full_sequence = torch.cat([text_emb] + sequence_A + sequence_B + [pred_token], dim=1)  # [B, L, D]
@@ -246,10 +242,7 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
                 pred_class_token = full_embeddings[:, idx_pred, :]  # [B, D]
             else:
                 # Regular mode: use frame embeddings directly
-                if sample_type == "preference":
-                    pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
-                else:
-                    pred_token = einops.repeat(self.similarity_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
+                pred_token = einops.repeat(self.preference_token, "1 1 d -> b 1 d", b=B)  # [B, 1, D]
 
                 token_sequence = torch.cat(
                     [text_embeddings.unsqueeze(1), video_embeddings_A, video_embeddings_B, pred_token], dim=1
@@ -300,8 +293,6 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
 
             if sample_type == "preference":
                 output.pref_logits = self.preference_head(pred_class_token)
-            else:  # similarity
-                output.sim_logits = self.similarity_head(pred_class_token)
 
         elif sample_type == "progress":
             if self.config.use_per_frame_progress_token:

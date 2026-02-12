@@ -1,10 +1,8 @@
 from .rewind_transformer import ReWiNDTransformer, ReWINDTransformerConfig
-from .rfm import RFM
-from .rfm_vqa import RFMVQA
+from .rbm import RBM
 
 __all__ = [
-    "RFM",
-    "RFMVQA",
+    "RBM",
     "ReWiNDTransformer",
     "ReWINDTransformerConfig",
 ]

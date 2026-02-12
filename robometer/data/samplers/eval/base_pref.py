@@ -6,7 +6,7 @@ from robometer.data.dataset_types import PreferenceSample, Trajectory
 from robometer.data.samplers.base import RFMBaseSampler
 
 
-class BaseQualityPreferenceSampler(RFMBaseSampler):
+class BaseQualityPreferenceSampler(RBMBaseSampler):
     """Base class for quality preference samplers.
 
     Subclasses should implement `_generate_all_sample_indices` to define how

@@ -80,7 +80,7 @@ The rejected trajectory depends on the strategy used:
 
 ## Progress Masking
 
-Progress prediction is controlled by the `should_compute_progress()` function in `robometer/data/collators/rfm_heads.py`:
+Progress prediction is controlled by the `should_compute_progress()` function in `robometer/data/collators/rbm_heads.py`:
 
 - **Suboptimal/Failure trajectories**: Progress is masked out (`returns 0.0`)
 - **Successful trajectories**: Progress is computed (`returns 1.0`)
@@ -203,7 +203,7 @@ Similarity samples compare three trajectories: a reference trajectory (`ref`), a
 
 ### Similarity Progress Masking
 
-Progress prediction for similarity samples is controlled by the `should_compute_progress()` function in `robometer/data/collators/rfm_heads.py`:
+Progress prediction for similarity samples is controlled by the `should_compute_progress()` function in `robometer/data/collators/rbm_heads.py`:
 
 - **Reference trajectory**: Always computes progress (`returns 1.0`)
 - **Sim trajectory**: 

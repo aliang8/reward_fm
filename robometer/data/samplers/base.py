@@ -27,7 +27,7 @@ from robometer.data.dataset_category import is_preference_only_ds
 logger = get_logger()
 
 
-class RFMBaseSampler:
+class RBMBaseSampler:
     """Base sampler class that provides trajectory retrieval functions for generating samples."""
 
     def __init__(
@@ -110,7 +110,7 @@ class RFMBaseSampler:
             item: An item from the dataset (typically a trajectory dict)
 
         Returns:
-            A sample object (e.g., PreferenceSample, SimilaritySample, ProgressSample)
+            A sample object (e.g., PreferenceSample, ProgressSample, SimilaritySample)
         """
         raise NotImplementedError("Subclasses must implement _generate_sample")
 

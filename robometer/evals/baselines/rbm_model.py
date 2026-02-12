@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-RFM and ReWiND model class for baseline evaluation.
+RBM and ReWiND model class for baseline evaluation.
 
-This class provides a unified interface for loading RFM/ReWiND models from checkpoints
+This class provides a unified interface for loading RBM/ReWiND models from checkpoints
 and computing progress, preference, and similarity predictions.
 """
 
@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Union
 
 from robometer.utils.setup_utils import setup_batch_collator
 from robometer.utils.save import load_model_from_hf
-from robometer.data.dataset_types import ProgressSample, PreferenceSample, SimilaritySample
+from robometer.data.dataset_types import ProgressSample, PreferenceSample
 from robometer.data.datasets.helpers import create_trajectory_from_dict
 from robometer.evals.eval_server import forward_model
 from robometer.utils.logger import get_logger, setup_loguru_logging
@@ -24,11 +24,11 @@ logger = get_logger()
 setup_loguru_logging("TRACE")
 
 
-class RFMModel:
-    """RFM/ReWiND model for baseline evaluation with unified compute methods."""
+class RBMModel:
+    """RBM/ReWiND model for baseline evaluation with unified compute methods."""
 
     def __init__(self, checkpoint_path: str):
-        """Initialize the RFM/ReWiND model wrapper.
+        """Initialize the RBM/ReWiND model wrapper.
 
         Args:
             checkpoint_path: Path to model checkpoint (HuggingFace repo ID or local path)
@@ -120,7 +120,7 @@ class RFMModel:
 
         # Handle different output formats
         if isinstance(progress_logits, dict):
-            # RFM format: {"A": tensor, "B": None}
+            # RBM format: {"A": tensor, "B": None}
             progress_tensor = progress_logits.get("A")
         else:
             # Direct tensor
@@ -217,81 +217,6 @@ class RFMModel:
 
         return result
 
-    def compute_similarity(
-        self, trajectory_images: List, reference_images: List, task_description: str = ""
-    ) -> Dict[str, Any]:
-        """Compute similarity score between a trajectory and reference.
-
-        Args:
-            trajectory_images: List of images/frames for the trajectory
-            reference_images: List of images/frames for the reference
-            task_description: Task description text
-
-        Returns:
-            Dictionary containing similarity scores and metadata
-        """
-        start_time = time.time()
-
-        # Create trajectories
-        traj = create_trajectory_from_dict({
-            "frames": trajectory_images,
-            "task": task_description,
-            "num_frames": len(trajectory_images),
-        })
-        ref_traj = create_trajectory_from_dict({
-            "frames": reference_images,
-            "task": task_description,
-            "num_frames": len(reference_images),
-        })
-
-        # Create SimilaritySample
-        # SimilaritySample expects ref_trajectory, sim_trajectory, diff_trajectory
-        # For evaluation, we use trajectory as sim_trajectory and reference as ref_trajectory
-        # We need a diff_trajectory - use reference as placeholder
-        sample = SimilaritySample(
-            ref_trajectory=ref_traj,
-            sim_trajectory=traj,
-            diff_trajectory=ref_traj,  # Placeholder - not used for similarity scoring
-        )
-
-        # Collate into batch
-        batch_inputs = self.batch_collator([sample])
-
-        # Extract similarity_inputs from batch_inputs (batch_collator returns nested structure)
-        similarity_inputs = batch_inputs["similarity_inputs"]
-
-        # Move to device
-        similarity_inputs = {
-            k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in similarity_inputs.items()
-        }
-
-        # Forward pass with inference mode for additional optimization
-        with torch.inference_mode():  # Faster than torch.no_grad() for inference-only code
-            model_output, _ = forward_model(self.model, similarity_inputs, sample_type="similarity")
-
-        # Extract similarity logits
-        sim_logits = model_output.sim_logits
-        if sim_logits is None:
-            raise ValueError("No similarity logits returned from model")
-
-        # Similarity logits are already in the right range
-        similarity_score = sim_logits.item()
-
-        processing_time = time.time() - start_time
-
-        # Build result dict
-        result = {
-            "similarity_score": float(similarity_score),
-            "similarity_logits": float(sim_logits.item()) if sim_logits is not None else None,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "task": task_description,
-            "num_trajectory_frames": len(trajectory_images),
-            "num_reference_frames": len(reference_images),
-            "processing_time_seconds": processing_time,
-        }
-
-        return result
-
     def compute_batched_progress(self, samples: List[ProgressSample]) -> List[List[float]]:
         """Compute progress predictions for a batch of trajectories.
 
@@ -329,7 +254,7 @@ class RFMModel:
 
         # Handle different output formats
         if isinstance(progress_logits, dict):
-            # RFM format: {"A": tensor, "B": None}
+            # RBM format: {"A": tensor, "B": None}
             progress_tensor = progress_logits.get("A")
         else:
             # Direct tensor
@@ -431,67 +356,6 @@ class RFMModel:
                 else 0,
                 "num_rejected_frames": len(sample.rejected_trajectory.frames)
                 if sample.rejected_trajectory.frames is not None
-                else 0,
-                "processing_time_seconds": processing_time / batch_size,  # Average time per sample
-            }
-            results.append(result)
-
-        return results
-
-    def compute_batched_similarity(self, samples: List[SimilaritySample]) -> List[Dict[str, Any]]:
-        """Compute similarity scores for a batch of trajectory-reference pairs.
-
-        Args:
-            samples: List of SimilaritySample objects
-
-        Returns:
-            List of result dictionaries, each containing similarity scores and metadata
-        """
-        if not samples:
-            return []
-
-        start_time = time.time()
-
-        # Collate into batch
-        batch_inputs = self.batch_collator(samples)
-
-        # Extract similarity_inputs from batch_inputs (batch_collator returns nested structure)
-        similarity_inputs = batch_inputs["similarity_inputs"]
-
-        # Move to device
-        similarity_inputs = {
-            k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in similarity_inputs.items()
-        }
-
-        # Forward pass with inference mode for additional optimization
-        with torch.inference_mode():  # Faster than torch.no_grad() for inference-only code
-            model_output, _ = forward_model(self.model, similarity_inputs, sample_type="similarity")
-
-        # Extract similarity logits
-        sim_logits = model_output.sim_logits
-        if sim_logits is None:
-            raise ValueError("No similarity logits returned from model")
-
-        # sim_logits shape: [batch_size]
-        batch_size = sim_logits.shape[0]
-        processing_time = time.time() - start_time
-
-        results = []
-        for i in range(batch_size):
-            sample = samples[i]
-            similarity_score = float(sim_logits[i].item())
-            similarity_logit = float(sim_logits[i].item())
-
-            result = {
-                "similarity_score": similarity_score,
-                "similarity_logits": similarity_logit,
-                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "task": sample.sim_trajectory.task if sample.sim_trajectory.task else "",
-                "num_trajectory_frames": len(sample.sim_trajectory.frames)
-                if sample.sim_trajectory.frames is not None
-                else 0,
-                "num_reference_frames": len(sample.ref_trajectory.frames)
-                if sample.ref_trajectory.frames is not None
                 else 0,
                 "processing_time_seconds": processing_time / batch_size,  # Average time per sample
             }

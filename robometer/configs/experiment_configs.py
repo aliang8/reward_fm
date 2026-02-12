@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Experiment configurations for RFM training.
+Experiment configurations for RBM training.
 This file contains all the dataclass configurations that can be reused
 across different training scripts.
 """
@@ -21,13 +21,10 @@ class ModelConfig(PretrainedConfig):
     train_vision_encoder: bool = field(default=False, metadata={"help": "Whether to train the vision encoder"})
     train_language_model: bool = field(default=True, metadata={"help": "Whether to train the language model"})
 
-    # RFM-specific head training options
+    # RBM-specific head training options
     train_progress_head: bool = field(default=False, metadata={"help": "Whether to train the progress prediction head"})
     train_preference_head: bool = field(
         default=False, metadata={"help": "Whether to train the preference prediction head"}
-    )
-    train_similarity_head: bool = field(
-        default=False, metadata={"help": "Whether to train the similarity scoring head"}
     )
     train_success_head: bool = field(default=False, metadata={"help": "Whether to train the success prediction head"})
 
@@ -181,7 +178,7 @@ class DataConfig:
 
     # Data generation parameters
     sample_type_ratio: List[float] = field(
-        default_factory=lambda: [1, 1, 1], metadata={"help": "Ratio of pref, progress and similarity samples"}
+        default_factory=lambda: [1, 1, 1], metadata={"help": "Ratio of pref and progress samples"}
     )
     dataset_preference_ratio: float = field(
         default=0.8, metadata={"help": "Ratio of dataset preference samples to generated preference samples"}
@@ -190,6 +187,7 @@ class DataConfig:
     preference_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
     # [different_task, forward_progress, reverse_progress, rewind]
     progress_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1, 1])
+    # Deprecated: similarity head removed; kept for dataloader/sampler backward compatibility.
     similarity_strategy_ratio: List[float] = field(default_factory=lambda: [1, 1, 1])
 
     data_source_weights: Optional[Dict[str, float]] = field(
@@ -277,7 +275,8 @@ class CustomEvaluationConfig:
     confusion_matrix: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     reward_alignment: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
     quality_preference: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
-    similarity_score: List[str] = field(default_factory=lambda: ["aliangdw_metaworld_metaworld_eval"])
+    # Deprecated: similarity head removed; kept so getattr(custom_eval, "similarity_score") does not break.
+    similarity_score: List[str] = field(default_factory=list)
     comparisons_per_task: Optional[int] = field(
         default=None,
         metadata={
@@ -352,7 +351,7 @@ class TrainingConfig:
 
     # Output and logging
     output_dir: str = field(default="./logs")
-    exp_name: str = field(default="rfm")
+    exp_name: str = field(default="rbm")
     max_seq_length: int = field(default=1024)
     beta: float = field(default=0.1)
     resume_from_checkpoint: Optional[str] = field(default=None)
@@ -423,15 +422,9 @@ class TrainingConfig:
     predict_pref_progress: bool = field(
         default=False, metadata={"help": "Whether to predict progress for preference samples"}
     )
-    predict_sim_progress: bool = field(
-        default=False, metadata={"help": "Whether to predict progress for similarity samples"}
-    )
-    predict_pref_sim: bool = field(
-        default=False,
-        metadata={
-            "help": "Whether to predict preference for ref/diff pair in similarity samples (ref is always preferred)"
-        },
-    )
+    # Deprecated: similarity head removed; kept for config backward compatibility.
+    predict_sim_progress: bool = field(default=False, metadata={"help": "Deprecated; unused."})
+    predict_pref_sim: bool = field(default=False, metadata={"help": "Deprecated; unused."})
 
 
 @dataclass
@@ -506,7 +499,7 @@ class LoggingConfig:
         metadata={"help": "List of logging backends to use, e.g., ['wandb', 'tensorboard']"},
     )
     # Wandb configuration
-    wandb_project: str = field(default="rfm-model", metadata={"help": "Wandb project name"})
+    wandb_project: str = field(default="rbm-model", metadata={"help": "Wandb project name"})
     wandb_entity: Optional[str] = field(default=None, metadata={"help": "Wandb entity/username"})
     wandb_notes: Optional[str] = field(
         default=None, metadata={"help": "Optional notes/comment to add to the wandb run"}
@@ -537,8 +530,8 @@ class ExperimentConfig:
     mode: str = field(default="train", metadata={"help": "Mode: 'train' or 'evaluate'"})
     debug: bool = field(default=False, metadata={"help": "Whether to run in debug mode"})
     trainer_cls: str = field(
-        default="rfm_heads",
-        metadata={"help": "Trainer class: 'rfm_heads', 'rewind_transformer', 'rfm_vqa', 'rewind_scale_transformer'"},
+        default="rbm_heads",
+        metadata={"help": "Trainer class: 'rbm_heads', 'rewind_transformer', 'rewind_scale_transformer'"},
     )
     model: ModelConfig = field(default_factory=ModelConfig)
     peft: PEFTConfig = field(default_factory=PEFTConfig)

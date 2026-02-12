@@ -1,4 +1,4 @@
-from robometer.data.samplers.base import RFMBaseSampler
+from robometer.data.samplers.base import RBMBaseSampler
 from robometer.data.samplers.pref import PrefSampler
 from robometer.data.samplers.sim import SimSampler
 from robometer.data.samplers.progress import ProgressSampler
@@ -10,7 +10,7 @@ from robometer.data.samplers.eval.roboarena_quality_preference import RoboArenaQ
 from robometer.data.samplers.eval.similarity_score import SimilarityScoreSampler
 
 __all__ = [
-    "RFMBaseSampler",
+    "RBMBaseSampler",
     "PrefSampler",
     "SimSampler",
     "ProgressSampler",

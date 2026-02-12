@@ -58,7 +58,7 @@ from robometer.data.datasets.base import resolve_dataset_keys
 from robometer.utils.distributed import is_rank_0
 from robometer.utils.logger import get_logger
 from robometer.utils.config_utils import display_config, convert_hydra_to_dataclass
-from robometer.data.dataset_types import PreferenceSample, ProgressSample, SimilaritySample
+from robometer.data.dataset_types import PreferenceSample, ProgressSample
 from robometer.data.collators.utils import convert_frames_to_pil_images, frames_to_numpy_array
 from robometer.evals.baselines.rlvlmf import RLVLMF
 from robometer.evals.baselines.gvl import GVL
@@ -66,7 +66,7 @@ from robometer.evals.baselines.vlac import VLAC
 
 from robometer.evals.baselines.robodopamine import RoboDopamine
 from robometer.evals.baselines.roboreward import RoboReward
-from robometer.evals.baselines.rfm_model import RFMModel
+from robometer.evals.baselines.rbm_model import RBMModel
 from robometer.evals.compile_results import (
     run_quality_preference_eval,
     run_reward_alignment_eval_per_trajectory,
@@ -350,16 +350,16 @@ def process_progress_sample(
     return result
 
 
-def process_batched_rfm_samples(
+def process_batched_rbm_samples(
     dataset,
-    model: RFMModel,
+    model: RBMModel,
     batch_size: int = 32,
 ) -> List[Dict[str, Any]]:
-    """Process RFM/ReWiND samples using batched computation with minibatching.
+    """Process RBM/ReWiND samples using batched computation with minibatching.
 
     Args:
         dataset: Dataset object that supports indexing (e.g., CustomEvalDataset)
-        model: RFMModel instance
+        model: RBMModel instance
         batch_size: Batch size for processing samples
 
     Returns:
@@ -370,7 +370,6 @@ def process_batched_rfm_samples(
     # Group indices by sample type (iterate once, only storing indices)
     progress_indices = []
     preference_indices = []
-    similarity_indices = []
 
     for i in range(dataset_len):
         sample = dataset[i]
@@ -378,8 +377,6 @@ def process_batched_rfm_samples(
             progress_indices.append(i)
         elif isinstance(sample, PreferenceSample):
             preference_indices.append(i)
-        elif isinstance(sample, SimilaritySample):
-            similarity_indices.append(i)
         else:
             logger.warning(f"Unknown sample type: {type(sample)}")
 
@@ -467,18 +464,6 @@ def process_batched_rfm_samples(
                 }
                 results.append(formatted_result)
 
-    # Process similarity samples in minibatches (if needed in the future)
-    if similarity_indices:
-        for batch_start in tqdm(range(0, len(similarity_indices), batch_size), desc="Processing similarity batches"):
-            batch_indices = similarity_indices[batch_start : batch_start + batch_size]
-            batch = [dataset[i] for i in batch_indices]
-            similarity_results = model.compute_batched_similarity(batch)
-            # For now, similarity samples are not used in baseline evaluation
-            # but we process them for completeness
-            for sample, result in zip(batch, similarity_results):
-                # Format similarity result if needed
-                results.append(result)
-
     return results
 
 
@@ -503,13 +488,13 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
         model = RoboDopamine(model_path=cfg.model_path, **model_config_dict)
     elif cfg.reward_model == "roboreward":
         model = RoboReward(model_path=cfg.model_path or "teetone/RoboReward-4B", **model_config_dict)
-    elif cfg.reward_model in ["rfm", "rewind"]:
+    elif cfg.reward_model in ["rfm", "rewind", "rbm"]:
         if not cfg.model_path:
-            raise ValueError("model_path is required for RFM/ReWiND reward model")
-        model = RFMModel(checkpoint_path=cfg.model_path)
+            raise ValueError("model_path is required for RBM/ReWiND reward model")
+        model = RBMModel(checkpoint_path=cfg.model_path)
     else:
         raise ValueError(
-            f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'robodopamine', 'roboreward', 'rfm', or 'rewind'"
+            f"Unknown reward_model: {cfg.reward_model}. Must be 'rlvlmf', 'gvl', 'vlac', 'robodopamine', 'roboreward', 'rfm', 'rewind', or 'rbm'"
         )
 
     all_metrics = {}
@@ -559,7 +544,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
             # Create data config for this dataset (similar to trainer)
             eval_data_cfg = copy.deepcopy(base_data_cfg)
-            eval_data_cfg.dataset_type = "rfm"
+            eval_data_cfg.dataset_type = "rbm"
             eval_data_cfg.eval_datasets = resolved_dataset_name
 
             # Setup dataset
@@ -594,12 +579,12 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             # Process samples
             eval_results = []
 
-            if cfg.reward_model in ["rfm", "rewind"]:
+            if cfg.reward_model in ["rfm", "rewind", "rbm"]:
                 # For RFM/ReWiND, process dataset using indices to avoid materializing entire dataset
-                logger.info(f"Processing {len(dataset)} samples in batches for RFM/ReWiND")
+                logger.info(f"Processing {len(dataset)} samples in batches for RBM/ReWiND")
 
                 model_config_dict = asdict(cfg.model_config) if hasattr(cfg.model_config, "__dataclass_fields__") else cfg.model_config.__dict__
-                batch_results = process_batched_rfm_samples(dataset, model, batch_size=model_config_dict["batch_size"])
+                batch_results = process_batched_rbm_samples(dataset, model, batch_size=model_config_dict["batch_size"])
                 eval_results.extend(batch_results)
             else:
                 # For other models, process samples one at a time
@@ -632,7 +617,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
                 if eval_type == "quality_preference":
                     # Quality preference evaluation for rlvlmf, rfm, rewind
-                    if cfg.reward_model not in ["rlvlmf", "rfm", "rewind"]:
+                    if cfg.reward_model not in ["rlvlmf", "rfm", "rewind", "rbm"]:
                         raise ValueError(
                             f"quality_preference evaluation only supported for rlvlmf, rfm, rewind, got {cfg.reward_model}"
                         )
@@ -663,7 +648,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
                 elif eval_type == "confusion_matrix":
                     # Confusion matrix evaluation for gvl, vlac, roboreward, rfm, rewind
-                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "robodopamine", "rfm", "rewind"]:
+                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "robodopamine", "rfm", "rewind", "rbm"]:
                         raise ValueError(
                             f"confusion_matrix evaluation only supported for gvl, vlac, roboreward, robodopamine, rfm, rewind, got {cfg.reward_model}"
                         )
@@ -699,7 +684,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
 
                 else:
                     # Progress evaluation (reward_alignment, policy_ranking) for gvl, vlac, roboreward, rfm, rewind
-                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "robodopamine", "rfm", "rewind"]:
+                    if cfg.reward_model not in ["gvl", "vlac", "roboreward", "robodopamine", "rfm", "rewind", "rbm"]:
                         raise ValueError(
                             f"Progress evaluation only supported for gvl, vlac, roboreward, robodopamine, rfm, rewind, got {cfg.reward_model}"
                         )
@@ -823,7 +808,7 @@ def main(cfg: DictConfig):
     display_config(baseline_cfg)
 
     # Validate reward model
-    if baseline_cfg.reward_model not in ["gvl", "vlac", "rlvlmf", "roboreward", "robodopamine", "rfm", "rewind"]:
+    if baseline_cfg.reward_model not in ["gvl", "vlac", "rlvlmf", "roboreward", "robodopamine", "rfm", "rewind", "rbm"]:
         raise ValueError(
             f"reward_model must be 'gvl', 'vlac', 'rlvlmf', 'roboreward', 'robodopamine', 'rfm', or 'rewind', got {baseline_cfg.reward_model}"
         )

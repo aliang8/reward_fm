@@ -4,13 +4,13 @@ from itertools import cycle
 import numpy as np
 from collections import defaultdict
 from robometer.data.dataset_types import ProgressSample
-from robometer.data.samplers.base import RFMBaseSampler
+from robometer.data.samplers.base import RBMBaseSampler
 from robometer.utils.logger import get_logger
 
 logger = get_logger()
 
 
-class ProgressPolicyRankingSampler(RFMBaseSampler):
+class ProgressPolicyRankingSampler(RBMBaseSampler):
     """Dataset that generates progress samples for policy ranking by selecting N trajectories per quality label for tasks with multiple quality labels."""
 
     def __init__(

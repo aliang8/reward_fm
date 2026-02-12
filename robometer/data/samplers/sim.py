@@ -12,7 +12,7 @@ from robometer.utils.logger import get_logger, rank_0_info
 logger = get_logger()
 
 
-class SimSampler(RFMBaseSampler):
+class SimSampler(RBMBaseSampler):
     """Data generator for producing batches for similarity scoring."""
 
     def __init__(self, is_evaluation=False, **kwargs):

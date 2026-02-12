@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Dataclasses for RFM model dataset trajectory structures.
+Dataclasses for RBM model dataset trajectory structures.
 Defines the standard format for HuggingFace dataset trajectories.
 """
 
@@ -64,16 +64,14 @@ class PreferenceSample(BaseModel):
 
 
 class SimilaritySample(BaseModel):
-    """Sample structure for similarity scoring: traj_sim and traj_diff ranked against o^ref."""
+    """Deprecated: similarity head removed. Kept for backward compatibility when loading datasets/samplers."""
 
-    # Trajectories
-    ref_trajectory: Trajectory  # o^ref
-    sim_trajectory: Trajectory  # Similar trajectory
-    diff_trajectory: Optional[Trajectory] = None  # Different trajectory (optional in inference mode)
-
+    ref_trajectory: Trajectory
+    sim_trajectory: Trajectory
+    diff_trajectory: Optional[Trajectory] = None
     sample_type: str = "similarity"
     data_gen_strategy: Optional[str] = None
     resample_attempts: int = 1
 
 
-SampleType = Union[PreferenceSample, SimilaritySample, ProgressSample]
+SampleType = Union[PreferenceSample, ProgressSample, SimilaritySample]

@@ -24,7 +24,7 @@ from robometer.configs.experiment_configs import (
     SaveBestConfig,
     CustomEvaluationConfig,
 )
-from robometer.trainers import ReWiNDTrainer, RFMHeadsTrainer, RFMVQATrainer
+from robometer.trainers import ReWiNDTrainer, RFMHeadsTrainer
 from robometer.data.datasets.helpers import show_available_datasets
 from robometer.utils.distributed import is_rank_0
 from robometer.utils.logger import rank_0_info
@@ -91,17 +91,17 @@ def train(cfg: ExperimentConfig):
     banner("Setting up model and processor")
     # Use the shared function to set up model and processor
     with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
-        tokenizer, processor, rfm_model = setup_model_and_processor(cfg.model, peft_config=cfg.peft)
+        tokenizer, processor, rbm_model = setup_model_and_processor(cfg.model, peft_config=cfg.peft)
 
     # Apply PEFT if enabled
     if cfg.model.use_peft:
-        peft_rfm_model = setup_peft_model(rfm_model, cfg.peft)
+        peft_rbm_model = setup_peft_model(rbm_model, cfg.peft)
     else:
-        peft_rfm_model = rfm_model
+        peft_rbm_model = rbm_model
         rank_0_info("PEFT not enabled, using full model")
 
     if cfg.model.quantization:
-        peft_rfm_model = prepare_model_for_kbit_training(peft_rfm_model)
+        peft_rbm_model = prepare_model_for_kbit_training(peft_rbm_model)
 
     output_dir = os.path.join(cfg.training.output_dir, run_name)
 
@@ -229,9 +229,9 @@ def train(cfg: ExperimentConfig):
 
     banner("Setting up trainer", f"Trainer class: {cfg.trainer_cls}")
     trainer_cls = {
-        "rfm_heads": RFMHeadsTrainer,
+        "rbm_heads": RBMHeadsTrainer,
+        "rfm_heads": RBMHeadsTrainer,  # backward compat
         "rewind_transformer": ReWiNDTrainer,
-        "rfm_vqa": RFMVQATrainer,
         "rewind_scale_transformer": ReWiNDTrainer,
     }[cfg.trainer_cls]
 
@@ -243,7 +243,7 @@ def train(cfg: ExperimentConfig):
     )
 
     trainer = trainer_cls(
-        model=peft_rfm_model,
+        model=peft_rbm_model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,

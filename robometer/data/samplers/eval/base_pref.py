@@ -3,7 +3,7 @@ from typing import Dict, Any
 import numpy as np
 
 from robometer.data.dataset_types import PreferenceSample, Trajectory
-from robometer.data.samplers.base import RFMBaseSampler
+from robometer.data.samplers.base import RBMBaseSampler
 
 
 class BaseQualityPreferenceSampler(RBMBaseSampler):

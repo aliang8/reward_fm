@@ -13,7 +13,7 @@ import torch
 from tqdm import tqdm
 
 from robometer.data.dataset_types import ProgressSample, Trajectory
-from robometer.data.samplers.base import RFMBaseSampler
+from robometer.data.samplers.base import RBMBaseSampler
 from robometer.utils.distributed import rank_0_print
 from robometer.utils.logger import get_logger
 

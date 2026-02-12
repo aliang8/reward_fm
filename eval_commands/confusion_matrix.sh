@@ -63,7 +63,7 @@ uv run python robometer/evals/run_baseline_eval.py \
 # RFM
 # without koch
 uv run python robometer/evals/run_baseline_eval.py \
-    reward_model=rfm \
+    reward_model=rbm \
     model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
     custom_eval.eval_types=[confusion_matrix] \
     custom_eval.confusion_matrix=[[aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking]] \
@@ -72,7 +72,7 @@ uv run python robometer/evals/run_baseline_eval.py \
 
 # on all
 uv run python robometer/evals/run_baseline_eval.py \
-    reward_model=rfm \
+    reward_model=rbm \
     model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
     custom_eval.eval_types=[confusion_matrix] \
     custom_eval.confusion_matrix=[[aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking,jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all]] \

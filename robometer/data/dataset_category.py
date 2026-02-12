@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Dataset categorization for RFM training.
+Dataset categorization for RBM training.
 
 This module defines categories for datasets to control sampling behavior:
 - success: Datasets containing primarily successful trajectories
 - failure: Datasets containing failure trajectories
-- preference_only: Datasets that should only generate preference samples (no progress/similarity)
+- preference_only: Datasets that should only generate preference samples (no progress)
 - paired: Datasets containing paired human/robot trajectories
 """
 
@@ -371,7 +371,7 @@ DATASET_MAP = {
             "abraranwar_libero_rfm_libero256_90",
         ],
     },
-    "rfm-1m-ood": {
+    "rbm-1m-ood": {
         "eval": [
             # "jesbu1_roboarena_eval_debug_nowrist_roboarena_eval_debug_nowrist",  # putting this here for now
             # "jesbu1_roboreward_rfm_roboreward_test",

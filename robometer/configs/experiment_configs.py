@@ -21,7 +21,6 @@ class ModelConfig(PretrainedConfig):
     train_vision_encoder: bool = field(default=False, metadata={"help": "Whether to train the vision encoder"})
     train_language_model: bool = field(default=True, metadata={"help": "Whether to train the language model"})
 
-    # RBM-specific head training options
     train_progress_head: bool = field(default=False, metadata={"help": "Whether to train the progress prediction head"})
     train_preference_head: bool = field(
         default=False, metadata={"help": "Whether to train the preference prediction head"}

@@ -24,25 +24,10 @@ General-purpose robot reward models are typically trained to predict absolute ta
 
 ---
 
-## 🗞️ News
-
-- **Baseline evals**: Run reward alignment, policy ranking, and confusion matrix evals for RFM, ReWiND, GVL, VLAC, RoboReward, and **Robometer** (Robo-Dopamine GRM).
-
----
-
-## 🤖 Overview
-
-**Robometer** provides:
-
-- **Training**: Progress and preference reward modeling over trajectory videos and task descriptions.
-- **Baseline evaluations**: Compare against GVL, VLAC, RoboReward, and **Robometer** (Robo-Dopamine GRM) on reward alignment, policy ranking, and confusion matrix metrics.
-
----
-
 ## 📦 Package structure
 
 ```
-reward_fm/
+robometer/
 ├── robometer/              # Main package
 │   ├── data/               # Datasets and preprocessing
 │   ├── configs/            # Hydra and experiment configs
@@ -66,8 +51,8 @@ reward_fm/
 ### Install (main env)
 
 ```bash
-git clone https://github.com/aliang8/reward_fm.git
-cd reward_fm
+git clone https://github.com/aliang8/robometer.git
+cd robometer
 
 # Create venv and install
 uv sync
@@ -88,7 +73,49 @@ For raw download and preprocessing, see [📥 Download raw datasets](#-download-
 
 ### 🔍 Robometer evaluation
 
-Same interface as other baselines: `reward_model=robodopamine`, plus `policy_ranking` or `confusion_matrix` eval types. Example commands are in `eval_commands/reward_alignment.sh`, `eval_commands/policy_ranking.sh`, and `eval_commands/confusion_matrix.sh`.  
+Run RBM baselines with `reward_model=rbm` and override `model_path` and `custom_eval.*` as needed. Example commands (see `eval_commands/*.sh` for ReWIND, Robo-Dopamine, VLAC, RoboReward):
+
+**Reward alignment**
+
+```bash
+uv run python robometer/evals/run_baseline_eval.py \
+    reward_model=rbm \
+    model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
+    custom_eval.eval_types=[reward_alignment] \
+    custom_eval.reward_alignment=[rbm-1m-id,rbm-1m-ood] \
+    custom_eval.use_frame_steps=true \
+    custom_eval.subsample_n_frames=5 \
+    custom_eval.reward_alignment_max_trajectories=30 \
+    max_frames=4 \
+    model_config.batch_size=32
+```
+
+**Policy ranking**
+
+```bash
+uv run python robometer/evals/run_baseline_eval.py \
+    reward_model=rbm \
+    model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
+    custom_eval.eval_types=[policy_ranking] \
+    custom_eval.policy_ranking=[rbm-1m-ood] \
+    custom_eval.use_frame_steps=false \
+    custom_eval.num_examples_per_quality_pr=1000 \
+    max_frames=8 \
+    model_config.batch_size=32
+```
+
+**Confusion matrix**
+
+```bash
+uv run python robometer/evals/run_baseline_eval.py \
+    reward_model=rbm \
+    model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
+    custom_eval.eval_types=[confusion_matrix] \
+    custom_eval.confusion_matrix=[[aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking]] \
+    max_frames=8 \
+    model_config.batch_size=32
+```
+
 Detailed baseline eval docs: [robometer/evals/README.md](robometer/evals/README.md).
 
 ---
@@ -103,13 +130,8 @@ uv run accelerate launch --config_file robometer/configs/fsdp.yaml train.py --co
 
 ### Baseline evaluation (all models)
 
-```bash
-# RFM / ReWiND
-uv run python robometer/evals/run_baseline_eval.py reward_model=rfm model_path=... custom_eval.eval_types=[reward_alignment] ...
-
-# GVL, VLAC, RoboReward: see robometer/evals/README.md and eval_commands/*.sh
-# Robometer: use .venv-robodopamine/bin/python as in [Robometer inference](#-robometer-inference-reward-alignment) above
-```
+- **RBM:** use the [reward alignment](#-robometer-evaluation), [policy ranking](#-robometer-evaluation), or [confusion matrix](#-robometer-evaluation) commands above; set `model_path` to your checkpoint.
+- **ReWIND, Robo-Dopamine, VLAC, RoboReward:** see [robometer/evals/README.md](robometer/evals/README.md) and `eval_commands/reward_alignment.sh`, `eval_commands/policy_ranking.sh`, `eval_commands/confusion_matrix.sh`. For Robo-Dopamine use `.venv-robodopamine/bin/python` (vLLM) instead of `uv run`.
 
 ### Evaluation via HTTP server
 
@@ -152,15 +174,6 @@ export ROBOMETER_DATASET_PATH=/path/to/your/robometer_dataset
 # Preprocess
 uv run python -m robometer.data.scripts.preprocess_datasets --config robometer/configs/preprocess.yaml
 export ROBOMETER_PROCESSED_DATASETS_PATH=/path/to/save/processed_datasets
-```
-
----
-
-## 🔧 Development
-
-```bash
-uv run ruff check .
-uv run ruff format .
 ```
 
 ---

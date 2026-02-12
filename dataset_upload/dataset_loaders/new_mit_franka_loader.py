@@ -50,7 +50,9 @@ def _load_video_frames(video_path: str) -> list[np.ndarray]:
     return frames
 
 
-def _build_video_paths(output_dir: str, dataset_label: str, episode_idx: int, task_name: str, view: str) -> tuple[str, str]:
+def _build_video_paths(
+    output_dir: str, dataset_label: str, episode_idx: int, task_name: str, view: str
+) -> tuple[str, str]:
     """Build output video paths with shard structure."""
     shard_index = episode_idx // 1000
     shard_dir = f"shard_{shard_index:04d}"
@@ -160,7 +162,7 @@ def convert_new_mit_franka_dataset_to_hf(
 
     # Iterate through task folders
     task_folders = [d for d in root.iterdir() if d.is_dir()]
-    
+
     for task_folder in sorted(task_folders):
         task_name = task_folder.name
         if task_name not in TASK_INSTRUCTIONS:
@@ -168,7 +170,7 @@ def convert_new_mit_franka_dataset_to_hf(
             continue
 
         instruction = TASK_INSTRUCTIONS[task_name]
-        
+
         # Iterate through quality folders (suboptimal, failure, success)
         for quality_folder in ["suboptimal", "failure", "success"]:
             quality_dir = task_folder / quality_folder
@@ -177,7 +179,7 @@ def convert_new_mit_franka_dataset_to_hf(
 
             # Get all video files
             video_files = sorted(quality_dir.glob("*.mp4"))
-            
+
             for video_file in video_files:
                 # Determine view type (ext or wrist)
                 if "_ext.mp4" in video_file.name:

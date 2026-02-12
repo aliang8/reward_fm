@@ -310,7 +310,7 @@ class SaveBestCallback(TrainerCallback):
         Note: This should only be called from rank 0 in the current implementation.
         """
         model = self._trainer.model
-        
+
         # Check if we're using PEFT
         is_peft = False
         base_model = None
@@ -318,63 +318,76 @@ class SaveBestCallback(TrainerCallback):
             is_peft = True
             base_model = model.model
             logger.info("Detected PEFT model - using standard PeftModel.save_pretrained() for adapter weights")
-        
+
         if is_peft:
             # For PEFT models, we need to save:
             # 1. Adapter weights using PeftModel.save_pretrained() (saves adapter_model.safetensors + adapter_config.json)
             # 2. Custom heads (progress_head, etc.) from RFM wrapper
             # 3. Other RFM-specific parameters (frame_pool_attn, video_proj, text_proj, etc.)
-            
+
             # Save adapter weights using standard PEFT method
             logger.info("Saving PEFT adapter weights using PeftModel.save_pretrained()")
             base_model.save_pretrained(ckpt_dir)
-            
+
             # Save custom heads and other RFM-specific parameters
             # These are not part of the PeftModel, so we save them separately
             rfm_state_dict = {}
             for name, param in model.named_parameters():
                 # Include custom heads and other RFM-specific parameters
                 # Exclude base model parameters (handled by PEFT) and adapter parameters (already saved)
-                if "progress_head" in name or "preference_head" in name or "similarity_head" in name or "success_head" in name:
+                if (
+                    "progress_head" in name
+                    or "preference_head" in name
+                    or "similarity_head" in name
+                    or "success_head" in name
+                ):
                     rfm_state_dict[name] = param.data.cpu()
                 elif "frame_pool_attn" in name or "video_proj" in name or "text_proj" in name:
                     rfm_state_dict[name] = param.data.cpu()
-            
+
             # Also save non-parameter buffers if any
             for name, buffer in model.named_buffers():
-                if "progress_head" in name or "preference_head" in name or "similarity_head" in name or "success_head" in name:
+                if (
+                    "progress_head" in name
+                    or "preference_head" in name
+                    or "similarity_head" in name
+                    or "success_head" in name
+                ):
                     rfm_state_dict[name] = buffer.cpu()
-            
+
             if rfm_state_dict:
                 # Save custom heads to a separate file
                 from safetensors.torch import save_file
+
                 custom_heads_path = os.path.join(ckpt_dir, "custom_heads.safetensors")
                 save_file(rfm_state_dict, custom_heads_path)
                 logger.info(f"Saved {len(rfm_state_dict)} custom head parameters to {custom_heads_path}")
-            
+
             # Verify that adapter weights were saved
             adapter_config_path = os.path.join(ckpt_dir, "adapter_config.json")
             adapter_model_paths = [
                 os.path.join(ckpt_dir, "adapter_model.safetensors"),
                 os.path.join(ckpt_dir, "adapter_model.bin"),  # Fallback to .bin if safetensors not available
             ]
-            
+
             if os.path.exists(adapter_config_path):
                 logger.info(f"PEFT adapter config saved to {adapter_config_path}")
             else:
                 logger.warning(f"PEFT adapter config not found at {adapter_config_path}")
-            
+
             # Check for adapter model files
             adapter_model_found = any(os.path.exists(p) for p in adapter_model_paths)
             if adapter_model_found:
                 adapter_path = next(p for p in adapter_model_paths if os.path.exists(p))
                 logger.info(f"PEFT adapter weights saved to {adapter_path}")
             else:
-                logger.warning("PEFT adapter weights file not found - adapter weights may not have been saved correctly")
+                logger.warning(
+                    "PEFT adapter weights file not found - adapter weights may not have been saved correctly"
+                )
         else:
             # For non-PEFT models, use standard save_model()
             self._trainer.save_model(ckpt_dir)
-        
+
         if args.should_save:
             self._trainer.save_state()  # trainer_state.json etc. in output_dir
             # save the trainer_state.json to the actual checkpoint directory
@@ -400,7 +413,7 @@ class SaveBestCallback(TrainerCallback):
                 # Handle RepeatedDataset wrapper if present
                 if hasattr(train_dataset, "dataset"):
                     train_dataset = train_dataset.dataset
-                
+
                 if hasattr(train_dataset, "get_random_state"):
                     random_state = train_dataset.get_random_state()
                     random_state_file = os.path.join(ckpt_dir, "dataset_random_state.json")
@@ -787,12 +800,10 @@ def load_model_from_hf(
     from robometer.utils.setup_utils import setup_model_and_processor
 
     # Extract PEFT config from the loaded experiment config
-    peft_config = exp_config.peft if hasattr(exp_config, 'peft') and exp_config.model.use_peft else None
-    
+    peft_config = exp_config.peft if hasattr(exp_config, "peft") and exp_config.model.use_peft else None
+
     tokenizer, processor, reward_model = setup_model_and_processor(
-        exp_config.model, 
-        str(resolved_path),
-        peft_config=peft_config
+        exp_config.model, str(resolved_path), peft_config=peft_config
     )
     reward_model = reward_model.to(device)
     reward_model.eval()

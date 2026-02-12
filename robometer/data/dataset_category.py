@@ -273,10 +273,10 @@ DATASET_MAP = {
                 "abraranwar_libero_rfm_libero256_90",
                 "ykorkmaz_libero_failure_rfm_libero_90_failure",
             ],
-            [ 
+            [
                 "abraranwar_libero_rfm_libero256_10",
                 "ykorkmaz_libero_failure_rfm_libero_10_failure",
-            ]
+            ],
         ],
     },
     "rfm-1m-id": {
@@ -396,10 +396,10 @@ DATASET_MAP = {
                 "abraranwar_libero_rfm_libero256_90",
                 "ykorkmaz_libero_failure_rfm_libero_90_failure",
             ],
-            [ 
+            [
                 "abraranwar_libero_rfm_libero256_10",
                 "ykorkmaz_libero_failure_rfm_libero_10_failure",
-            ]
+            ],
         ],
     },
 }

@@ -144,7 +144,9 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
 
     # If path is relative, prepend ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH)
     if not os.path.isabs(npz_filepath):
-        rfm_dataset_path = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+        rfm_dataset_path = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get(
+            "RFM_PROCESSED_DATASETS_PATH", ""
+        )
         # HACK:
         rfm_dataset_path = rfm_dataset_path.replace("processed_datasets", "")
         if rfm_dataset_path:
@@ -179,7 +181,9 @@ def load_embeddings_from_path(embeddings_path: str) -> torch.Tensor:
 
     # If path is relative, prepend ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH)
     if not os.path.isabs(embeddings_path):
-        rfm_dataset_path = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+        rfm_dataset_path = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get(
+            "RFM_PROCESSED_DATASETS_PATH", ""
+        )
         # HACK:
         rfm_dataset_path = rfm_dataset_path.replace("processed_datasets/", "")
         rfm_dataset_path = rfm_dataset_path.replace("processed_datasets", "")

@@ -90,7 +90,9 @@ def main():
     cache_dir = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get("RFM_PROCESSED_DATASETS_PATH")
 
     if not cache_dir:
-        console.print("[bold red]Error:[/bold red] ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH) environment variable is not set!")
+        console.print(
+            "[bold red]Error:[/bold red] ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH) environment variable is not set!"
+        )
         console.print("Please set it to the directory containing your processed datasets.")
         console.print("Example: export ROBOMETER_PROCESSED_DATASETS_PATH=/path/to/robometer/processed_datasets")
         return

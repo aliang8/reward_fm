@@ -47,6 +47,7 @@ class ReWINDTransformerConfig(PretrainedConfig):
         self.max_len = max_len
         self.causal_mask = causal_mask
 
+
 class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
     """ReWiND Transformer with three prediction heads for different objectives."""
 
@@ -64,10 +65,10 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
             text_feature_dim = text_encoder.config.hidden_size
 
         super().__init__(
-            config=config.rewind, 
-            model_config=config, 
-            hidden_dim=rewind_config.hidden_dim, 
-            dropout=rewind_config.dropout
+            config=config.rewind,
+            model_config=config,
+            hidden_dim=rewind_config.hidden_dim,
+            dropout=rewind_config.dropout,
         )
 
         self.image_encoder = image_encoder
@@ -355,7 +356,9 @@ class ReWiNDTransformer(PredictionHeadsMixin, PreTrainedModel):
                 video_embeddings = video_embeddings.clone()
                 video_embeddings[:, 0:1] += first_frame_emb
 
-                token_sequence = torch.cat([text_embeddings.unsqueeze(1), video_embeddings], dim=1)  # shape: [B, T + 1, D]
+                token_sequence = torch.cat(
+                    [text_embeddings.unsqueeze(1), video_embeddings], dim=1
+                )  # shape: [B, T + 1, D]
 
                 # Build causal mask if enabled
                 mask = None

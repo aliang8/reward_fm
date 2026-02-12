@@ -526,15 +526,19 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         }
         with _timer("time/rbm_forward", timing_raw=timing_raw):
             # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
-            is_qwen3 = "Qwen3" in self.base_model_id or (hasattr(self.model, "config") and "Qwen3" in str(type(self.model)))
+            is_qwen3 = "Qwen3" in self.base_model_id or (
+                hasattr(self.model, "config") and "Qwen3" in str(type(self.model))
+            )
             if is_qwen3:
                 outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
                 # Qwen3 uses hidden_states tuple, take the last layer
-                hidden_state = outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
+                hidden_state = (
+                    outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
+                )
             else:
                 outputs = self.model(**model_kwargs)
                 hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
-        
+
         progress_logits = {"A": None, "B": None}
         success_logits = {"A": None, "B": None}
 
@@ -617,15 +621,19 @@ class RBM(PredictionHeadsMixin, PreTrainedModel):
         }
         with _timer("time/rbm_forward", timing_raw=timing_raw):
             # Qwen3 models may need output_hidden_states=True and use hidden_states instead of last_hidden_state
-            is_qwen3 = "Qwen3" in self.base_model_id or (hasattr(self.model, "config") and "Qwen3" in str(type(self.model)))
+            is_qwen3 = "Qwen3" in self.base_model_id or (
+                hasattr(self.model, "config") and "Qwen3" in str(type(self.model))
+            )
             if is_qwen3:
                 outputs = self.model(**model_kwargs, output_hidden_states=True, return_dict=True)
                 # Qwen3 uses hidden_states tuple, take the last layer
-                hidden_state = outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
+                hidden_state = (
+                    outputs.hidden_states[-1] if hasattr(outputs, "hidden_states") else outputs.last_hidden_state
+                )
             else:
                 outputs = self.model(**model_kwargs)
                 hidden_state = outputs.last_hidden_state  # [B, seq_len, hidden_dim]
-        
+
         progress_logits = {"A": None, "B": None}
         success_logits = {"A": None, "B": None}
 

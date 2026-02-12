@@ -50,9 +50,11 @@ def resolve_dataset_keys(
 
 
 class BaseDataset(torch.utils.data.Dataset):
-    def __init__(self, config: DataConfig, is_evaluation: bool = False, filter_quality_labels: Optional[List[str]] = None):
+    def __init__(
+        self, config: DataConfig, is_evaluation: bool = False, filter_quality_labels: Optional[List[str]] = None
+    ):
         """Initialize BaseDataset.
-        
+
         Args:
             config: Data configuration
             is_evaluation: Whether this is an evaluation dataset
@@ -144,7 +146,9 @@ class BaseDataset(torch.utils.data.Dataset):
                 - dataset: The loaded and concatenated dataset
                 - combined_indices: Dictionary of combined indices
         """
-        cache_dir = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+        cache_dir = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get(
+            "RFM_PROCESSED_DATASETS_PATH", ""
+        )
         if not cache_dir:
             raise ValueError(
                 "ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH) not set. Set it to the directory containing your processed datasets."

@@ -63,6 +63,7 @@ except ImportError:
 
 logger = get_logger()
 
+
 def download_vlac_model(
     repo_id: str = "InternRobotics/VLAC", cache_dir: Optional[str] = None, local_dir: Optional[str] = None
 ) -> str:
@@ -266,7 +267,7 @@ class VLAC:
                 assert compressed_frames_array.shape[0] == frames_array.shape[0], (
                     f"Shape mismatch: original {frames_array.shape} vs compressed {compressed_frames_array.shape}"
                 )
-                
+
                 # Run VLAC trajectory critic with video
                 # Note: web_trajectory_critic returns (result_path, value_list, critic_list, done_list)
                 # where value_list contains progress values in [0, 1] if rich=True, or [0, 100] if rich=False

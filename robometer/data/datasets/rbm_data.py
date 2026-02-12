@@ -42,7 +42,7 @@ class RBMDataset(BaseDataset):
 
     def get_random_state(self) -> dict:
         """Get random state from all samplers for checkpointing.
-        
+
         Returns:
             Dictionary containing random state for all samplers
         """
@@ -54,7 +54,7 @@ class RBMDataset(BaseDataset):
 
     def set_random_state(self, state: dict):
         """Restore random state from checkpoint.
-        
+
         Args:
             state: Dictionary containing random state for all samplers
         """

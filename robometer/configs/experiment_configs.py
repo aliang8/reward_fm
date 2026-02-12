@@ -44,7 +44,9 @@ class ModelConfig(PretrainedConfig):
     )
     frame_pooling_attn_temperature: float = field(
         default=1.0,
-        metadata={"help": "Softmax temperature for attention pooling over patch tokens (only used when frame_pooling='attention')."},
+        metadata={
+            "help": "Softmax temperature for attention pooling over patch tokens (only used when frame_pooling='attention')."
+        },
     )
 
     use_per_frame_progress_token: bool = field(
@@ -96,7 +98,7 @@ class ModelConfig(PretrainedConfig):
                 self.rewind["progress_discrete_bins"] = self.progress_discrete_bins or 10
             if "use_per_frame_progress_token" not in self.rewind:
                 self.rewind["use_per_frame_progress_token"] = self.use_per_frame_progress_token
-            
+
             self.rewind = ReWINDTransformerConfig(**self.rewind)
 
 
@@ -331,6 +333,7 @@ class CustomEvaluationConfig:
             "help": "Whether to pad frames for reward alignment and policy ranking evaluations. True = pad frames, False = use original frames."
         },
     )
+
 
 @dataclass
 class TrainingConfig:

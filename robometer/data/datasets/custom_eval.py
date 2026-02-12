@@ -26,12 +26,12 @@ class CustomEvalDataset(BaseDataset):
             sampler_kwargs: Additional keyword arguments for the sampler
         """
         filter_quality_labels: Optional[List[str]] = None
-        
+
         if sampler_type == "reward_alignment":
             filter_quality_labels = ["successful"]
         elif sampler_type == "confusion_matrix":
             filter_quality_labels = ["successful", "suboptimal"]
-        
+
         # Special case: roboreward datasets should not filter by quality
         if len(config.eval_datasets) == 1 and "roboreward" in config.eval_datasets[0]:
             filter_quality_labels = None

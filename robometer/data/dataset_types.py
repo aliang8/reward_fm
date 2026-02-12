@@ -35,7 +35,9 @@ class Trajectory(BaseModel):
     target_progress: Optional[Union[List[float], List[torch.Tensor], torch.Tensor, None]] = None
     partial_success: Optional[Union[float, torch.Tensor]] = None  # float for continuous, Tensor for C51 discrete
     success_label: Optional[List[float]] = None  # Success labels for each frame (1.0 for success, 0.0 for failure)
-    predict_last_frame_mask: Optional[List[float]] = None  # Mask for partial_success: 1.0 for last frame if partial_success < 1.0, otherwise all 1.0s
+    predict_last_frame_mask: Optional[List[float]] = (
+        None  # Mask for partial_success: 1.0 for last frame if partial_success < 1.0, otherwise all 1.0s
+    )
     metadata: Optional[Dict[str, Any]] = None
     data_gen_strategy: Optional[str] = None
 

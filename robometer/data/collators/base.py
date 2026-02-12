@@ -60,9 +60,7 @@ class BaseCollator:
                 elif sample_type == "progress":
                     sample_obj = ProgressSample(**sample)
                 else:
-                    raise ValueError(
-                        f"Unknown sample_type: {sample_type}. Must be 'preference' or 'progress'"
-                    )
+                    raise ValueError(f"Unknown sample_type: {sample_type}. Must be 'preference' or 'progress'")
                 sample_objects.append(sample_obj)
             elif isinstance(sample, (PreferenceSample, ProgressSample)):
                 sample_objects.append(sample)

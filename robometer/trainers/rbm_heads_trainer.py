@@ -409,9 +409,7 @@ class RBMHeadsTrainer(Trainer):
         num_preferences = inputs.get("num_preferences", 0)
         num_progress = inputs.get("num_progress", 0)
 
-        logger.trace(
-            f"num_preferences: {num_preferences}, num_progress: {num_progress}"
-        )
+        logger.trace(f"num_preferences: {num_preferences}, num_progress: {num_progress}")
 
         if num_preferences > 0 and preference_inputs:
             rejected_data_gen_strategy = preference_inputs["rejected_data_gen_strategy"]
@@ -1798,9 +1796,7 @@ class RBMHeadsTrainer(Trainer):
         total_loss = 0
         log_metadata = {}
 
-        logger.trace(
-            f"Num preferences: {num_preferences}, Num progress: {num_progress}"
-        )
+        logger.trace(f"Num preferences: {num_preferences}, Num progress: {num_progress}")
 
         # Compute preference loss if we have preference samples
         if num_preferences > 0 and preference_inputs and self.config.model.train_preference_head:
@@ -2078,7 +2074,7 @@ class RBMHeadsTrainer(Trainer):
                     mask = mask.expand_as(predict_last_frame_mask)
                 elif predict_last_frame_mask.shape[1] == 1 and mask.shape[1] > 1:
                     predict_last_frame_mask = predict_last_frame_mask.expand_as(mask)
-            
+
             mask = mask * predict_last_frame_mask
         elif self.config.loss.predict_last_frame_progress:
             # Fallback to config-based logic: create a mask that only selects the last frame for each sequence
@@ -2609,4 +2605,3 @@ class RBMHeadsTrainer(Trainer):
                 return final_loss, outputs_dict
 
         return final_loss
-

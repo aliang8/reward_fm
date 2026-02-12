@@ -47,7 +47,7 @@ class GVL:
                 api_key = os.environ.get("OPENAI_API_KEY")
                 if not api_key:
                     raise ValueError("OPENAI_API_KEY environment variable must be set")
-        
+
         self.api_key = api_key
         self.max_frames = max_frames
         self.offset = offset
@@ -208,11 +208,13 @@ class GVL:
                 with requests.post(url, headers=headers, json=body, stream=True) as resp:
                     # Check for throttling or server errors
                     if resp.status_code == 429 or resp.status_code >= 500:
-                        delay = min(self.base_delay * (2 ** attempt), self.max_delay)
-                        print(f"[GVL] API returned {resp.status_code}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})")
+                        delay = min(self.base_delay * (2**attempt), self.max_delay)
+                        print(
+                            f"[GVL] API returned {resp.status_code}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})"
+                        )
                         time.sleep(delay)
                         continue
-                    
+
                     resp.raise_for_status()
 
                     for line in resp.iter_lines(decode_unicode=True):
@@ -233,15 +235,17 @@ class GVL:
                                         full_text += text_piece
                             except json.JSONDecodeError:
                                 continue
-                
+
                 return full_text
-                
+
             except requests.exceptions.RequestException as e:
                 last_exception = e
-                delay = min(self.base_delay * (2 ** attempt), self.max_delay)
-                print(f"[GVL] Request failed: {e}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})")
+                delay = min(self.base_delay * (2**attempt), self.max_delay)
+                print(
+                    f"[GVL] Request failed: {e}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})"
+                )
                 time.sleep(delay)
-        
+
         # All retries exhausted
         print(f"[GVL] All {self.max_retries + 1} attempts failed")
         if last_exception:
@@ -254,38 +258,27 @@ class GVL:
         Implements exponential backoff retry on throttling (429) and server errors (5xx).
         """
         url = "https://api.openai.com/v1/chat/completions"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}"
-        }
+        headers = {"Content-Type": "application/json", "Authorization": f"Bearer {self.api_key}"}
 
         # Convert parts to OpenAI message format
         content = []
         for part in parts:
             if "text" in part:
-                content.append({
-                    "type": "text",
-                    "text": part["text"]
-                })
+                content.append({"type": "text", "text": part["text"]})
             elif "inline_data" in part:
                 content.append({
                     "type": "image_url",
                     "image_url": {
                         "url": f"data:{part['inline_data']['mime_type']};base64,{part['inline_data']['data']}",
-                        "detail": "low"  # Use low detail for efficiency
-                    }
+                        "detail": "low",  # Use low detail for efficiency
+                    },
                 })
 
         body = {
             "model": self.model_name,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": content
-                }
-            ],
+            "messages": [{"role": "user", "content": content}],
             "max_tokens": 4096,
-            "stream": True
+            "stream": True,
         }
 
         last_exception = None
@@ -295,18 +288,20 @@ class GVL:
                 with requests.post(url, headers=headers, json=body, stream=True) as resp:
                     # Check for throttling or server errors
                     if resp.status_code == 429 or resp.status_code >= 500:
-                        delay = min(self.base_delay * (2 ** attempt), self.max_delay)
-                        print(f"[GVL-OpenAI] API returned {resp.status_code}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})")
+                        delay = min(self.base_delay * (2**attempt), self.max_delay)
+                        print(
+                            f"[GVL-OpenAI] API returned {resp.status_code}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})"
+                        )
                         time.sleep(delay)
                         continue
-                    
+
                     resp.raise_for_status()
 
                     for line in resp.iter_lines(decode_unicode=True):
                         if not line:
                             continue
                         if line.startswith("data: "):
-                            data_str = line[len("data: "):]
+                            data_str = line[len("data: ") :]
                             if data_str == "[DONE]":
                                 break
                             try:
@@ -319,15 +314,17 @@ class GVL:
                                         full_text += text_piece
                             except json.JSONDecodeError:
                                 continue
-                
+
                 return full_text
-                
+
             except requests.exceptions.RequestException as e:
                 last_exception = e
-                delay = min(self.base_delay * (2 ** attempt), self.max_delay)
-                print(f"[GVL-OpenAI] Request failed: {e}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})")
+                delay = min(self.base_delay * (2**attempt), self.max_delay)
+                print(
+                    f"[GVL-OpenAI] Request failed: {e}, retrying in {delay:.1f}s (attempt {attempt + 1}/{self.max_retries + 1})"
+                )
                 time.sleep(delay)
-        
+
         # All retries exhausted
         print(f"[GVL-OpenAI] All {self.max_retries + 1} attempts failed")
         if last_exception:

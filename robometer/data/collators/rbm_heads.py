@@ -441,9 +441,7 @@ class RBMBatchCollator(BaseCollator):
         batch_inputs["target_progress_mask"] = torch.tensor(target_progress_mask, dtype=torch.float32)
 
         # Create predict_last_frame masks for trajectories with partial_success
-        predict_last_frame_mask_list = [
-            sample.trajectory.predict_last_frame_mask for sample in progress_samples
-        ]
+        predict_last_frame_mask_list = [sample.trajectory.predict_last_frame_mask for sample in progress_samples]
 
         # Add predict_last_frame_mask (padded to max_length)
         batch_inputs["predict_last_frame_mask"] = pad_list_to_max(predict_last_frame_mask_list)
@@ -695,4 +693,3 @@ class RBMBatchCollator(BaseCollator):
         batch_inputs["metadata"] = metadata_list
 
         return batch_inputs
-

@@ -720,15 +720,17 @@ class RBMBaseSampler:
         # mark all positions where it appears with 1.0, all others 0.0. Otherwise, all 1.0s.
         final_frame_count = len(subsampled)
         predict_last_frame_mask = [1.0] * final_frame_count  # Default: all 1.0s (no masking)
-        
+
         if self.config.predict_last_frame_partial_progress and partial_success is not None:
             if partial_success == 1.0 and not is_preference_only_ds(traj["data_source"]):
-                pass 
+                pass
             else:
                 last_original_frame_idx = num_frames_total - 1
                 if isinstance(indices, list) and last_original_frame_idx in indices:
                     # Find all positions where the last frame index appears
-                    last_frame_positions = [i for i, idx in enumerate(indices) if idx == last_original_frame_idx and i < final_frame_count]
+                    last_frame_positions = [
+                        i for i, idx in enumerate(indices) if idx == last_original_frame_idx and i < final_frame_count
+                    ]
                     if last_frame_positions:
                         # Mark all positions where the last frame appears with 1.0, all others 0.0
                         predict_last_frame_mask = [0.0] * final_frame_count

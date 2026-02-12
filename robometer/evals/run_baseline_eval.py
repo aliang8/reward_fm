@@ -190,12 +190,12 @@ def _shorten_single_name(name: str, mapping: dict) -> str:
     # Check if there's a direct mapping
     if name in mapping:
         return mapping[name]
-    
+
     # Also check after normalizing (in case the input has special chars)
     normalized = name.replace("-", "_").replace("/", "_")
     if normalized in mapping:
         return mapping[normalized]
-    
+
     # No mapping found, clean up the name
     for char in ["/", "\\", ":", "*", "?", '"', "<", ">", "|", " ", ","]:
         name = name.replace(char, "_")
@@ -205,43 +205,43 @@ def _shorten_single_name(name: str, mapping: dict) -> str:
 
 def _shorten_dataset_name(dataset_name: Union[str, List[str]], max_length: int = 60) -> str:
     """Shorten dataset name for use in filenames.
-    
+
     Uses DS_SHORT_NAME_MAPPING for known datasets, otherwise truncates with hash suffix.
     For lists, each element is shortened individually then combined.
-    
+
     Args:
         dataset_name: Dataset name (string or list of strings)
         max_length: Maximum length for the output string (default 60)
-    
+
     Returns:
         Shortened, filesystem-safe string for use in filenames
     """
     from robometer.data.datasets.name_mapping import DS_SHORT_NAME_MAPPING
-    
+
     # Handle list by shortening each element individually
     if isinstance(dataset_name, list):
         shortened_parts = [_shorten_single_name(str(x), DS_SHORT_NAME_MAPPING) for x in dataset_name]
         name_str = "_".join(shortened_parts)
     else:
         name_str = _shorten_single_name(str(dataset_name), DS_SHORT_NAME_MAPPING)
-    
+
     # Collapse multiple underscores
     name_str = re.sub(r"_+", "_", name_str)
     name_str = name_str.strip("_")
-    
+
     # If short enough, return as-is
     if len(name_str) <= max_length:
         return name_str
-    
+
     # Generate short hash of original name for uniqueness
     original_str = "_".join(str(x) for x in dataset_name) if isinstance(dataset_name, list) else str(dataset_name)
     hash_suffix = hashlib.md5(original_str.encode()).hexdigest()[:8]
-    
+
     # Truncate and add hash
     # Reserve space for hash suffix: "_" + 8 chars = 9 chars
     truncate_length = max_length - 9
     truncated = name_str[:truncate_length].rstrip("_")
-    
+
     return f"{truncated}_{hash_suffix}"
 
 
@@ -471,8 +471,10 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
     """Run baseline evaluation on datasets."""
 
     # Initialize model based on reward_model type
-    model_config_dict = asdict(cfg.model_config) if hasattr(cfg.model_config, "__dataclass_fields__") else cfg.model_config.__dict__
-    
+    model_config_dict = (
+        asdict(cfg.model_config) if hasattr(cfg.model_config, "__dataclass_fields__") else cfg.model_config.__dict__
+    )
+
     if cfg.reward_model == "rlvlmf":
         model = RLVLMF(**model_config_dict)
     elif cfg.reward_model == "gvl":
@@ -533,7 +535,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
         for dataset_name in resolved_datasets:
             # Create short name for filenames (dataset names can be very long)
             short_dataset_name = _shorten_dataset_name(dataset_name)
-            
+
             # Resolve dataset keys
             if isinstance(dataset_name, list):
                 resolved_dataset_name = dataset_name
@@ -583,7 +585,11 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                 # For RFM/ReWiND, process dataset using indices to avoid materializing entire dataset
                 logger.info(f"Processing {len(dataset)} samples in batches for RBM/ReWiND")
 
-                model_config_dict = asdict(cfg.model_config) if hasattr(cfg.model_config, "__dataclass_fields__") else cfg.model_config.__dict__
+                model_config_dict = (
+                    asdict(cfg.model_config)
+                    if hasattr(cfg.model_config, "__dataclass_fields__")
+                    else cfg.model_config.__dict__
+                )
                 batch_results = process_batched_rbm_samples(dataset, model, batch_size=model_config_dict["batch_size"])
                 eval_results.extend(batch_results)
             else:
@@ -593,7 +599,9 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
                         result = process_preference_sample(sample, model)
                         if result:
                             eval_results.append(result)
-                    elif cfg.reward_model in ["gvl", "vlac", "roboreward", "robodopamine"] and isinstance(sample, ProgressSample):
+                    elif cfg.reward_model in ["gvl", "vlac", "roboreward", "robodopamine"] and isinstance(
+                        sample, ProgressSample
+                    ):
                         # Handle ProgressSamples for gvl/vlac/roboreward (including confusion_matrix)
                         result = process_progress_sample(sample, model)
                         if result:

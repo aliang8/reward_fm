@@ -1085,7 +1085,9 @@ def main(config: DataPreprocessConfig):
 
     print("\n✅ Dataset preprocessing complete!")
     print(f"Unified cache: {config.cache_dir}")
-    print(f"Please set ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH) to {config.cache_dir} by running:")
+    print(
+        f"Please set ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH) to {config.cache_dir} by running:"
+    )
     print(f"export ROBOMETER_PROCESSED_DATASETS_PATH={config.cache_dir}")
 
 

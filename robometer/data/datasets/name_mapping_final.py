@@ -90,8 +90,7 @@ DS_SHORT_NAME_MAPPING = {
     "jesbu1_usc_koch_p_ranking_rfm_usc_koch_p_ranking_all": "Usc Koch (P-Rank All)",
     # Reward Alignment
     "abraranwar_usc_koch_rewind_rfm_usc_koch_rewind": "Usc Koch Rewind",
-
     # Extras
     "jesbu1_roboreward_rfm_roboreward_test": "RoboReward (Test)",
-    "jesbu1_roboreward_rfm_roboreward_val": "RoboReward (Val)"
+    "jesbu1_roboreward_rfm_roboreward_val": "RoboReward (Val)",
 }

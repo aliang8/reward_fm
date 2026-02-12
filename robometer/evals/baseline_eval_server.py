@@ -288,8 +288,12 @@ class BaselineEvalServer:
 
     def _initialize_model(self):
         """Initialize the baseline model based on config."""
-        model_config_dict = asdict(self.cfg.model_config) if hasattr(self.cfg.model_config, "__dataclass_fields__") else self.cfg.model_config.__dict__
-        
+        model_config_dict = (
+            asdict(self.cfg.model_config)
+            if hasattr(self.cfg.model_config, "__dataclass_fields__")
+            else self.cfg.model_config.__dict__
+        )
+
         if self.reward_model == "rlvlmf":
             self.model = RLVLMF(**model_config_dict)
         elif self.reward_model == "gvl":

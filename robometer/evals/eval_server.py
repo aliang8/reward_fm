@@ -289,9 +289,7 @@ def process_batch_helper(
 
     num_preferences = batch_inputs.get("num_preferences", 0)
     num_progress = batch_inputs.get("num_progress", 0)
-    logger.debug(
-        f"[job {job_id}] Batch counts — preference: {num_preferences} progress: {num_progress}"
-    )
+    logger.debug(f"[job {job_id}] Batch counts — preference: {num_preferences} progress: {num_progress}")
 
     if num_preferences > 0:
         outputs_preference = compute_batch_outputs(
@@ -305,13 +303,13 @@ def process_batch_helper(
 
     if num_progress > 0:
         outputs_progress = compute_batch_outputs(
-                model,
-                tokenizer,
-                batch_inputs["progress_inputs"],
-                sample_type="progress",
-                is_discrete_mode=is_discrete_mode,
-                num_bins=num_bins,
-            )
+            model,
+            tokenizer,
+            batch_inputs["progress_inputs"],
+            sample_type="progress",
+            is_discrete_mode=is_discrete_mode,
+            num_bins=num_bins,
+        )
 
         if "outputs_success" in outputs_progress:
             outputs_success = outputs_progress.pop("outputs_success")

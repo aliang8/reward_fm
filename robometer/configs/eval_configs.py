@@ -68,6 +68,7 @@ class OfflineEvalConfig:
 @dataclass
 class RLVLMFConfig:
     """Configuration for RL-VLM-F baseline model."""
+
     vlm_provider: str = field(
         default="gemini",
         metadata={"help": "VLM provider for RL-VLM-F: 'gemini' or 'openai'"},
@@ -81,6 +82,7 @@ class RLVLMFConfig:
 @dataclass
 class GVLConfig:
     """Configuration for GVL baseline model."""
+
     api_key: Optional[str] = field(
         default=None,
         metadata={"help": "API key (defaults to GEMINI_API_KEY or OPENAI_API_KEY env var based on provider)"},
@@ -115,6 +117,7 @@ class GVLConfig:
 @dataclass
 class VLACConfig:
     """Configuration for VLAC baseline model."""
+
     device: str = field(
         default="cuda:0",
         metadata={"help": "Device for VLAC model"},
@@ -150,6 +153,7 @@ class VLACConfig:
 @dataclass
 class RBMConfig:
     """Configuration for RBM/ReWiND baseline model."""
+
     batch_size: int = field(
         default=32,
         metadata={"help": "Batch size for RBM/ReWiND model inference"},
@@ -159,6 +163,7 @@ class RBMConfig:
 @dataclass
 class RoboRewardConfig:
     """Configuration for RoboReward baseline model."""
+
     max_new_tokens: int = field(
         default=128,
         metadata={"help": "Maximum number of tokens to generate for RoboReward"},
@@ -168,6 +173,7 @@ class RoboRewardConfig:
 @dataclass
 class RoboDopamineConfig:
     """Configuration for Robo-Dopamine GRM baseline model."""
+
     frame_interval: int = field(
         default=1,
         metadata={"help": "Step between sampled frames for before/after pairs (1 = every frame)"},
@@ -193,7 +199,7 @@ class BaselineEvalConfig:
             "help": "Reward model: 'gvl', 'vlac', 'robodopamine' for progress; 'rlvlmf' for preference; 'rfm', 'rewind' for trained models; 'roboreward' for RoboReward baseline"
         },
     )
-    
+
     model_config: Any = field(
         default=None,
         metadata={"help": "Model-specific configuration (automatically selected based on reward_model)"},

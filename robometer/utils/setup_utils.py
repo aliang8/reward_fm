@@ -59,7 +59,9 @@ logger = get_logger()
 from robometer.utils.save import parse_hf_model_id_and_revision, resolve_checkpoint_path
 
 
-def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: ModelConfig, load_adapters: bool = True) -> None:
+def _load_checkpoint_weights_from_safetensors(
+    model, checkpoint_path: str, cfg: ModelConfig, load_adapters: bool = True
+) -> None:
     """
     Load checkpoint weights from safetensors files in a checkpoint directory.
     Includes verification for PEFT adapters and progress_head.
@@ -73,7 +75,7 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
         cfg: Model configuration for verification
         load_adapters: If False, skip loading adapter weights (assumes already loaded via PeftModel.from_pretrained)
     """
-    
+
     checkpoint_path = Path(checkpoint_path)
     if not checkpoint_path.exists():
         raise ValueError(f"Checkpoint path does not exist: {checkpoint_path}")
@@ -92,7 +94,7 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
     before_weights = {}
     before_progress_head = model.progress_head[0].weight.clone()
     before_weights["progress_head"] = before_progress_head
-    
+
     # Capture adapter weights before loading (if PEFT is enabled)
     adapter_keys_before = []
     sample_adapter_keys = []
@@ -120,30 +122,32 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
     logger.info(f"Found {len(checkpoint_adapter_keys)} adapter parameters in checkpoint")
     if checkpoint_adapter_keys:
         logger.debug(f"Sample checkpoint adapter keys: {checkpoint_adapter_keys[:5]}")
-    
+
     # If load_adapters=False, filter out adapter keys (they were already loaded via PeftModel.from_pretrained)
     if not load_adapters:
         logger.info("Skipping adapter weights (already loaded via PeftModel.from_pretrained)")
-        checkpoint_state_dict = {k: v for k, v in checkpoint_state_dict.items() if "lora_A" not in k and "lora_B" not in k}
+        checkpoint_state_dict = {
+            k: v for k, v in checkpoint_state_dict.items() if "lora_A" not in k and "lora_B" not in k
+        }
 
     # Get model's expected state dict keys
     model_state_dict = model.state_dict()
     model_keys = set(model_state_dict.keys())
-    
+
     # Log sample model keys to understand structure
     sample_model_keys = [k for k in list(model_keys)[:10]]
     logger.info(f"Sample model keys (first 10): {sample_model_keys}")
-    
+
     # Log sample checkpoint keys to understand structure
     sample_ckpt_keys = [k for k in list(checkpoint_state_dict.keys())[:10]]
     logger.info(f"Sample checkpoint keys (first 10): {sample_ckpt_keys}")
-    
+
     # Check if model has adapter keys and what structure they use
     model_adapter_keys = [k for k in model_keys if "lora_A" in k or "lora_B" in k]
     if model_adapter_keys:
         logger.info(f"Found {len(model_adapter_keys)} adapter keys in model")
         logger.debug(f"Sample model adapter keys: {model_adapter_keys[:3]}")
-    
+
     # Remap checkpoint keys to match model structure
     # For PEFT models wrapped in RBM: checkpoint has "model.model." but model expects "model.base_model.model.model."
     # Try multiple strategies: direct match, map "model.model." -> "model.base_model.model.model.", etc.
@@ -151,7 +155,7 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
     remapped_count = 0
     direct_match_count = 0
     remap_strategies = {}
-    
+
     for ckpt_key, ckpt_value in checkpoint_state_dict.items():
         if ckpt_key in model_keys:
             # Direct match - use as is
@@ -160,7 +164,7 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
         else:
             # Try different remapping strategies
             potential_keys = []
-            
+
             # Strategy 1 (PEFT): Map "model.model." -> "model.base_model.model.model." (for PEFT wrapped in RBM)
             # This handles the case where Unsloth saved the full model from model.model
             if ckpt_key.startswith("model.model."):
@@ -169,21 +173,21 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
                 potential_keys.append(peft_key)
                 # Also try: model.model.* -> model.* (fallback)
                 potential_keys.append(ckpt_key.replace("model.model.", "model.", 1))
-            
+
             # Strategy 2: Remove "model." prefix entirely
             if ckpt_key.startswith("model."):
                 potential_keys.append(ckpt_key.replace("model.", "", 1))
-            
+
             # Strategy 3: Add "model." prefix if missing
             if not ckpt_key.startswith("model."):
                 potential_keys.append(f"model.{ckpt_key}")
-            
+
             # Strategy 4: Try adding "base_model." between "model." and the rest (for non-PEFT wrapped models)
             if ckpt_key.startswith("model.") and not ckpt_key.startswith("model.base_model."):
                 parts = ckpt_key.split(".", 1)
                 if len(parts) == 2:
                     potential_keys.append(f"model.base_model.{parts[1]}")
-            
+
             # Try each potential key
             matched = False
             for potential_key in potential_keys:
@@ -196,13 +200,15 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
                         logger.debug(f"Remapped: {strategy}")
                     matched = True
                     break
-            
+
             if not matched:
                 # Key still doesn't match, will be in unexpected_keys
                 remapped_state_dict[ckpt_key] = ckpt_value
-    
+
     if remapped_count > 0:
-        logger.info(f"Remapped {remapped_count} checkpoint keys to match model structure (direct matches: {direct_match_count})")
+        logger.info(
+            f"Remapped {remapped_count} checkpoint keys to match model structure (direct matches: {direct_match_count})"
+        )
         if remap_strategies:
             logger.debug(f"Remapping strategies used: {dict(list(remap_strategies.items())[:5])}")
 
@@ -210,9 +216,15 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
     missing_keys, unexpected_keys = model.load_state_dict(remapped_state_dict, strict=False)
 
     # Filter missing keys - base model keys are expected for PEFT checkpoints
-    base_model_missing = [k for k in missing_keys if any(pattern in k for pattern in ["visual.", "language_model.", "text_encoder.", "text_model.", "embed_tokens"])]
+    base_model_missing = [
+        k
+        for k in missing_keys
+        if any(
+            pattern in k for pattern in ["visual.", "language_model.", "text_encoder.", "text_model.", "embed_tokens"]
+        )
+    ]
     other_missing = [k for k in missing_keys if k not in base_model_missing]
-    
+
     if base_model_missing:
         logger.info(f"Missing base model keys (expected for PEFT checkpoints): {len(base_model_missing)} keys")
     if other_missing:
@@ -224,7 +236,7 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
     # Filter unexpected keys - adapter keys might be expected if structure differs slightly
     adapter_unexpected = [k for k in unexpected_keys if "lora_A" in k or "lora_B" in k]
     other_unexpected = [k for k in unexpected_keys if k not in adapter_unexpected]
-    
+
     if adapter_unexpected:
         logger.warning(f"Unexpected adapter keys in checkpoint (not in model): {len(adapter_unexpected)} keys")
         logger.debug(
@@ -243,26 +255,28 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
     # Verify progress_head loaded correctly
     after_progress_head = model.progress_head[0].weight
     progress_head_loaded = not torch.allclose(before_progress_head, after_progress_head, atol=1e-6)
-    
+
     logger.info(
         f"Progress head - Before: shape={before_progress_head.shape}, sum={before_progress_head.sum():.6f} | "
         f"After: shape={after_progress_head.shape}, sum={after_progress_head.sum():.6f} | "
         f"Loaded: {progress_head_loaded}"
     )
-    
+
     if not progress_head_loaded:
         logger.error("Progress head weights did not change after loading checkpoint!")
         logger.error("This indicates the checkpoint weights were not loaded correctly.")
-        import ipdb; ipdb.set_trace()  # Breakpoint if progress_head didn't load
+        import ipdb
+
+        ipdb.set_trace()  # Breakpoint if progress_head didn't load
 
     # Verify adapter weights loaded correctly (if PEFT is enabled)
     adapter_loaded_correctly = True
     if cfg.use_peft and adapter_keys_before:
         model_state_dict_after = model.state_dict()
         adapter_keys_after = [k for k in model_state_dict_after.keys() if "lora_A" in k or "lora_B" in k]
-        
+
         logger.info(f"Adapter keys - Before: {len(adapter_keys_before)} | After: {len(adapter_keys_after)}")
-        
+
         # Check if sample adapter weights changed
         for key in sample_adapter_keys:
             if key in before_weights:
@@ -281,7 +295,7 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
                 else:
                     logger.warning(f"Adapter key {key} not found in model after loading!")
                     adapter_loaded_correctly = False
-        
+
         # Check how many adapter keys from checkpoint were actually loaded
         # Need to check both original and remapped keys (matching the remapping strategies above)
         loaded_adapter_keys = []
@@ -297,24 +311,28 @@ def _load_checkpoint_weights_from_safetensors(model, checkpoint_path: str, cfg: 
                     potential_keys.append(ckpt_key.replace("model.model.", "model.base_model.model.model.", 1))
                     # Strategy 2: Fallback
                     potential_keys.append(ckpt_key.replace("model.model.", "model.", 1))
-                
+
                 # Check if any remapped key exists in model
                 for remapped_key in potential_keys:
                     if remapped_key in model_state_dict_after:
                         loaded_adapter_keys.append(ckpt_key)  # Count original key as loaded
                         break
         logger.info(f"Loaded {len(loaded_adapter_keys)}/{len(checkpoint_adapter_keys)} adapter keys from checkpoint")
-        
+
         if len(loaded_adapter_keys) == 0:
             logger.error("No adapter weights were loaded from checkpoint!")
             adapter_loaded_correctly = False
         elif len(loaded_adapter_keys) < len(checkpoint_adapter_keys) * 0.5:  # Less than 50% loaded
-            logger.warning(f"Only {len(loaded_adapter_keys)}/{len(checkpoint_adapter_keys)} adapter keys loaded - may indicate structure mismatch")
+            logger.warning(
+                f"Only {len(loaded_adapter_keys)}/{len(checkpoint_adapter_keys)} adapter keys loaded - may indicate structure mismatch"
+            )
             adapter_loaded_correctly = False
-    
+
     if not adapter_loaded_correctly:
         logger.error("Adapter weights did not load correctly!")
-        import ipdb; ipdb.set_trace()  # Breakpoint if adapters didn't load correctly
+        import ipdb
+
+        ipdb.set_trace()  # Breakpoint if adapters didn't load correctly
 
     logger.info(f"Successfully loaded checkpoint weights from {checkpoint_path}")
 
@@ -382,7 +400,9 @@ def _load_base_model_with_unsloth(
         inner_model = base_model.model
         # Check if it's a PeftModel - if so, keep it as PeftModel for proper adapter loading
         if cfg.use_peft and isinstance(inner_model, PeftModel):
-            logger.info("Base model inner model is a PeftModel - will use PeftModel.from_pretrained() for adapter loading")
+            logger.info(
+                "Base model inner model is a PeftModel - will use PeftModel.from_pretrained() for adapter loading"
+            )
             base_model = inner_model
         else:
             base_model = inner_model
@@ -514,92 +534,92 @@ def _add_special_tokens_and_resize(cfg: ModelConfig, processor: AutoProcessor, b
     base_model.resize_token_embeddings(len(processor.tokenizer))
     logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
 
-        # import ipdb; ipdb.set_trace()
-        # # Resize token embeddings if new tokens were added
-        # vocab_size = (
-        #     base_model.config.text_config.vocab_size
-        #     if ("Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id)
-        #     else base_model.config.vocab_size
-        # )
+    # import ipdb; ipdb.set_trace()
+    # # Resize token embeddings if new tokens were added
+    # vocab_size = (
+    #     base_model.config.text_config.vocab_size
+    #     if ("Qwen3" in cfg.base_model_id or "Molmo" in cfg.base_model_id)
+    #     else base_model.config.vocab_size
+    # )
 
-        # if len(processor.tokenizer) != vocab_size:
-        #     logger.info(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
+    # if len(processor.tokenizer) != vocab_size:
+    #     logger.info(f"Resizing token embeddings from {vocab_size} to {len(processor.tokenizer)}")
 
-        #     is_molmo = "Molmo" in cfg.base_model_id
-        #     if is_molmo:
-        #         # Custom resize for Molmo2 - its Molmo2Embedding stores embedding as a Parameter directly
-        #         new_vocab_size = len(processor.tokenizer)
-        #         _embed_layer = base_model.get_input_embeddings()
+    #     is_molmo = "Molmo" in cfg.base_model_id
+    #     if is_molmo:
+    #         # Custom resize for Molmo2 - its Molmo2Embedding stores embedding as a Parameter directly
+    #         new_vocab_size = len(processor.tokenizer)
+    #         _embed_layer = base_model.get_input_embeddings()
 
-        #         # Check if embedding is a Parameter (tensor) directly, or an nn.Embedding
-        #         if hasattr(_embed_layer, "embedding"):
-        #             old_embed_attr = _embed_layer.embedding
+    #         # Check if embedding is a Parameter (tensor) directly, or an nn.Embedding
+    #         if hasattr(_embed_layer, "embedding"):
+    #             old_embed_attr = _embed_layer.embedding
 
-        #             # Case 1: embedding is a Parameter (raw tensor)
-        #             if isinstance(old_embed_attr, torch.nn.Parameter):
-        #                 old_num_tokens, embedding_dim = old_embed_attr.shape
+    #             # Case 1: embedding is a Parameter (raw tensor)
+    #             if isinstance(old_embed_attr, torch.nn.Parameter):
+    #                 old_num_tokens, embedding_dim = old_embed_attr.shape
 
-        #                 # Create new parameter with expanded vocab
-        #                 new_embed_data = torch.zeros(
-        #                     new_vocab_size, embedding_dim, device=old_embed_attr.device, dtype=old_embed_attr.dtype
-        #                 )
+    #                 # Create new parameter with expanded vocab
+    #                 new_embed_data = torch.zeros(
+    #                     new_vocab_size, embedding_dim, device=old_embed_attr.device, dtype=old_embed_attr.dtype
+    #                 )
 
-        #                 # Copy existing weights
-        #                 new_embed_data[:old_num_tokens] = old_embed_attr.data
+    #                 # Copy existing weights
+    #                 new_embed_data[:old_num_tokens] = old_embed_attr.data
 
-        #                 # Initialize new token embeddings using mean of existing embeddings
-        #                 mean_embedding = old_embed_attr.data.mean(dim=0)
-        #                 new_embed_data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
-        #                     new_vocab_size - old_num_tokens, -1
-        #                 )
+    #                 # Initialize new token embeddings using mean of existing embeddings
+    #                 mean_embedding = old_embed_attr.data.mean(dim=0)
+    #                 new_embed_data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
+    #                     new_vocab_size - old_num_tokens, -1
+    #                 )
 
-        #                 # Replace the embedding Parameter
-        #                 _embed_layer.embedding = torch.nn.Parameter(new_embed_data)
+    #                 # Replace the embedding Parameter
+    #                 _embed_layer.embedding = torch.nn.Parameter(new_embed_data)
 
-        #                 # Also update config to reflect new vocab size
-        #                 base_model.config.text_config.vocab_size = new_vocab_size
+    #                 # Also update config to reflect new vocab size
+    #                 base_model.config.text_config.vocab_size = new_vocab_size
 
-        #                 logger.info(
-        #                     f"Custom resized Molmo2 embeddings (Parameter) from {old_num_tokens} to {new_vocab_size}"
-        #                 )
+    #                 logger.info(
+    #                     f"Custom resized Molmo2 embeddings (Parameter) from {old_num_tokens} to {new_vocab_size}"
+    #                 )
 
-        #             # Case 2: embedding is an nn.Embedding with .weight
-        #             elif hasattr(old_embed_attr, "weight"):
-        #                 old_num_tokens, embedding_dim = old_embed_attr.weight.shape
+    #             # Case 2: embedding is an nn.Embedding with .weight
+    #             elif hasattr(old_embed_attr, "weight"):
+    #                 old_num_tokens, embedding_dim = old_embed_attr.weight.shape
 
-        #                 # Create new embedding layer with expanded vocab
-        #                 new_embedding = torch.nn.Embedding(
-        #                     new_vocab_size,
-        #                     embedding_dim,
-        #                     device=old_embed_attr.weight.device,
-        #                     dtype=old_embed_attr.weight.dtype,
-        #                 )
+    #                 # Create new embedding layer with expanded vocab
+    #                 new_embedding = torch.nn.Embedding(
+    #                     new_vocab_size,
+    #                     embedding_dim,
+    #                     device=old_embed_attr.weight.device,
+    #                     dtype=old_embed_attr.weight.dtype,
+    #                 )
 
-        #                 # Copy existing weights
-        #                 new_embedding.weight.data[:old_num_tokens] = old_embed_attr.weight.data
+    #                 # Copy existing weights
+    #                 new_embedding.weight.data[:old_num_tokens] = old_embed_attr.weight.data
 
-        #                 # Initialize new token embeddings using mean of existing embeddings
-        #                 mean_embedding = old_embed_attr.weight.data.mean(dim=0)
-        #                 new_embedding.weight.data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
-        #                     new_vocab_size - old_num_tokens, -1
-        #                 )
+    #                 # Initialize new token embeddings using mean of existing embeddings
+    #                 mean_embedding = old_embed_attr.weight.data.mean(dim=0)
+    #                 new_embedding.weight.data[old_num_tokens:] = mean_embedding.unsqueeze(0).expand(
+    #                     new_vocab_size - old_num_tokens, -1
+    #                 )
 
-        #                 # Replace the nested embedding
-        #                 _embed_layer.embedding = new_embedding
+    #                 # Replace the nested embedding
+    #                 _embed_layer.embedding = new_embedding
 
-        #                 # Also update config to reflect new vocab size
-        #                 base_model.config.text_config.vocab_size = new_vocab_size
+    #                 # Also update config to reflect new vocab size
+    #                 base_model.config.text_config.vocab_size = new_vocab_size
 
-        #                 logger.info(
-        #                     f"Custom resized Molmo2 embeddings (Embedding) from {old_num_tokens} to {new_vocab_size}"
-        #                 )
-        #             else:
-        #                 logger.warning(f"Cannot resize Molmo2 embeddings - unknown embedding type: {type(old_embed_attr)}")
-        #         else:
-        #             logger.warning(f"Cannot resize Molmo2 embeddings - no embedding attribute found")
-        #     else:
-        #         base_model.resize_token_embeddings(len(processor.tokenizer))
-        #         logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
+    #                 logger.info(
+    #                     f"Custom resized Molmo2 embeddings (Embedding) from {old_num_tokens} to {new_vocab_size}"
+    #                 )
+    #             else:
+    #                 logger.warning(f"Cannot resize Molmo2 embeddings - unknown embedding type: {type(old_embed_attr)}")
+    #         else:
+    #             logger.warning(f"Cannot resize Molmo2 embeddings - no embedding attribute found")
+    #     else:
+    #         base_model.resize_token_embeddings(len(processor.tokenizer))
+    #         logger.info(f"Resized token embeddings to {len(processor.tokenizer)}")
 
 
 def _verify_checkpoint_loading(cfg: ModelConfig, model: Any, before_weights: dict) -> None:
@@ -757,9 +777,10 @@ def setup_model_and_processor(
             logger.warning("PEFT is enabled but base_model is not a PeftModel. Applying PEFT now...")
             if peft_config is None:
                 raise ValueError("PEFT is enabled but peft_config is None. Cannot apply PEFT without configuration.")
-            
+
             # Apply PEFT to base_model
             from peft import LoraConfig, get_peft_model
+
             lora_config = LoraConfig(
                 r=peft_config.r,
                 lora_alpha=peft_config.lora_alpha,
@@ -776,7 +797,9 @@ def setup_model_and_processor(
                 logger.info("Confirmed: base_model is a PeftModel - ready to load adapter weights from checkpoint")
             else:
                 logger.error("CRITICAL: PEFT is enabled but base_model is not a PeftModel after applying PEFT!")
-                raise ValueError("Failed to apply PEFT to base_model. Cannot load adapter weights without PeftModel structure.")
+                raise ValueError(
+                    "Failed to apply PEFT to base_model. Cannot load adapter weights without PeftModel structure."
+                )
 
         # Add special tokens and resize embeddings
         _add_special_tokens_and_resize(cfg, processor, base_model)
@@ -806,7 +829,7 @@ def setup_model_and_processor(
                 checkpoint_path = resolve_checkpoint_path(hf_model_id)
                 if checkpoint_path is None:
                     raise ValueError(f"Could not resolve checkpoint path: {hf_model_id}")
-                
+
                 # Verify that model.model is a PeftModel (it should be since we ensured base_model was a PeftModel)
                 if not isinstance(model.model, PeftModel):
                     logger.error("CRITICAL: model.model is not a PeftModel! Cannot load adapter weights.")
@@ -814,15 +837,17 @@ def setup_model_and_processor(
                         "model.model is not a PeftModel. "
                         "This should not happen if PEFT was applied correctly before wrapping in RBM."
                     )
-                
+
                 # Check if adapter files exist first (indicates checkpoint was saved in PEFT format)
                 adapter_config_path = os.path.join(checkpoint_path, "adapter_config.json")
                 adapter_model_paths = [
                     os.path.join(checkpoint_path, "adapter_model.safetensors"),
                     os.path.join(checkpoint_path, "adapter_model.bin"),
                 ]
-                has_adapter_files = os.path.exists(adapter_config_path) and any(os.path.exists(p) for p in adapter_model_paths)
-                
+                has_adapter_files = os.path.exists(adapter_config_path) and any(
+                    os.path.exists(p) for p in adapter_model_paths
+                )
+
                 if has_adapter_files:
                     # Checkpoint has PEFT adapter files - use PeftModel.from_pretrained()
                     logger.info("Checkpoint contains PEFT adapter files - loading using PeftModel.from_pretrained()")
@@ -887,7 +912,7 @@ def setup_model_and_processor(
 
         if hf_model_id:
             repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="ReWiND model")
-            
+
             model = ReWiNDTransformer.from_pretrained(
                 repo_id,
                 processor=processor,
@@ -914,7 +939,7 @@ def setup_model_and_processor(
                 image_encoder=image_encoder,
                 text_encoder=text_encoder,
             )
-          
+
     logger.info("Model architecture initialized")
     logger.info(f"Model architecture: {model}")
 
@@ -922,21 +947,19 @@ def setup_model_and_processor(
     # IMPORTANT: When using PEFT (via Unsloth or standard), PEFT already handles freezing
     # base model parameters. We should NOT override requires_grad on base model params.
     peft_applied = cfg.use_peft and (cfg.use_unsloth or cfg.peft_vision_encoder)
-    
+
     # Helper function to check if a parameter is part of the base model (vision/language)
     def is_base_model_param(name: str) -> bool:
         """Check if parameter belongs to base model (vision/language) that PEFT handles."""
-        base_model_patterns = [
-            "visual", "vision", "language_model", "text_encoder", "text_model", "image_encoder"
-        ]
+        base_model_patterns = ["visual", "vision", "language_model", "text_encoder", "text_model", "image_encoder"]
         return any(pattern in name for pattern in base_model_patterns)
-    
+
     # Helper function to check if a parameter is a prediction head
     def is_prediction_head(name: str) -> bool:
         """Check if parameter belongs to a prediction head."""
         head_patterns = ["progress_head", "success_head", "preference_head", "similarity_head"]
         return any(pattern in name for pattern in head_patterns)
-    
+
     for name, param in model.named_parameters():
         # 1. Handle prediction heads - always controlled by their individual flags
         if is_prediction_head(name):
@@ -948,13 +971,13 @@ def setup_model_and_processor(
                 param.requires_grad = cfg.train_preference_head
             elif "similarity_head" in name:
                 param.requires_grad = False
-        
+
         # 2. Handle base model parameters (vision/language) - skip if PEFT is applied
         elif is_base_model_param(name):
             if peft_applied:
                 # PEFT handles freezing/unfreezing - don't override
                 continue
-            
+
             # Set requires_grad based on config flags
             if "visual" in name or "vision" in name or "vision_model" in name:
                 param.requires_grad = cfg.train_vision_encoder
@@ -962,12 +985,12 @@ def setup_model_and_processor(
                 param.requires_grad = cfg.train_language_model
             elif "image_encoder" in name:
                 param.requires_grad = cfg.train_vision_encoder
-        
+
         # 3. Handle special cases
         elif "lm_head" in name:
             # Language modeling head should not be trainable for RBM
             param.requires_grad = False
-        
+
         # 4. All other parameters (custom RBM parameters like frame_pool_attn, video_proj, text_proj)
         # should always be trainable
         else:
@@ -1100,8 +1123,8 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, sampler_kwargs=None, *
 
     if sampler_kwargs is None:
         sampler_kwargs = {}
-    
-    sampler_kwargs["random_seed"] = cfg.seed    
+
+    sampler_kwargs["random_seed"] = cfg.seed
     kwargs["sampler_kwargs"] = sampler_kwargs
     kwargs["random_seed"] = cfg.seed
 
@@ -1113,13 +1136,9 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, sampler_kwargs=None, *
     return dataset
 
 
-def setup_custom_eval_dataset(
-    cfg: DataConfig, sampler_type: str, verbose=True, sampler_kwargs=None
-):
+def setup_custom_eval_dataset(cfg: DataConfig, sampler_type: str, verbose=True, sampler_kwargs=None):
     """Setup a custom evaluation dataset with a specific sampler."""
-    custom_eval_dataset = CustomEvalDataset(
-        sampler_type, cfg, verbose=verbose, sampler_kwargs=sampler_kwargs
-    )
+    custom_eval_dataset = CustomEvalDataset(sampler_type, cfg, verbose=verbose, sampler_kwargs=sampler_kwargs)
 
     return custom_eval_dataset
 

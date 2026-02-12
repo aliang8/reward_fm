@@ -101,9 +101,7 @@ class StrategyFirstDataset(BaseDataset):
         self.successful_indices = set(quality_indices.get("successful", []))
 
         logger.info(f"StrategyFirstDataset initialized with {len(self.dataset)} trajectories")
-        logger.info(
-            f"Sample type ratios: pref={self.sample_type_ratio[0]}, progress={self.sample_type_ratio[1]}"
-        )
+        logger.info(f"Sample type ratios: pref={self.sample_type_ratio[0]}, progress={self.sample_type_ratio[1]}")
         logger.info(f"Available data sources: {list(self.source_indices.keys())}")
         if self.normalized_weights:
             logger.info("Data source weights enabled:")
@@ -114,7 +112,7 @@ class StrategyFirstDataset(BaseDataset):
 
     def get_random_state(self) -> dict:
         """Get random state from dataset and all samplers for checkpointing.
-        
+
         Returns:
             Dictionary containing random state for dataset and all samplers
         """
@@ -127,7 +125,7 @@ class StrategyFirstDataset(BaseDataset):
 
     def set_random_state(self, state: dict):
         """Restore random state from checkpoint.
-        
+
         Args:
             state: Dictionary containing random state for dataset and all samplers
         """

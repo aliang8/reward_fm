@@ -1114,7 +1114,6 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, sampler_kwargs=None, *
     """
     dataset_cls = {
         "rbm": RBMDataset,
-        "rfm": RBMDataset,  # backward compat
         "strategy_first": StrategyFirstDataset,
     }
 
@@ -1126,7 +1125,6 @@ def setup_dataset(cfg: DataConfig, is_eval: bool = False, sampler_kwargs=None, *
 
     sampler_kwargs["random_seed"] = cfg.seed
     kwargs["sampler_kwargs"] = sampler_kwargs
-    kwargs["random_seed"] = cfg.seed
 
     # Create the base dataset
     dataset = dataset_cls[cfg.dataset_type](config=cfg, is_evaluation=is_eval, **kwargs)

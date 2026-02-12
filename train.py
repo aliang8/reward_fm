@@ -24,7 +24,7 @@ from robometer.configs.experiment_configs import (
     SaveBestConfig,
     CustomEvaluationConfig,
 )
-from robometer.trainers import ReWiNDTrainer, RFMHeadsTrainer
+from robometer.trainers import ReWiNDTrainer, RBMHeadsTrainer
 from robometer.data.datasets.helpers import show_available_datasets
 from robometer.utils.distributed import is_rank_0
 from robometer.utils.logger import rank_0_info
@@ -230,7 +230,6 @@ def train(cfg: ExperimentConfig):
     banner("Setting up trainer", f"Trainer class: {cfg.trainer_cls}")
     trainer_cls = {
         "rbm_heads": RBMHeadsTrainer,
-        "rfm_heads": RBMHeadsTrainer,  # backward compat
         "rewind_transformer": ReWiNDTrainer,
         "rewind_scale_transformer": ReWiNDTrainer,
     }[cfg.trainer_cls]

@@ -123,9 +123,48 @@ Detailed baseline eval docs: [robometer/evals/README.md](robometer/evals/README.
 
 ### Training
 
+**Train on RBM-1M in-distribution and evaluate on RBM-1M-OOD**
+
 ```bash
-uv run accelerate launch --config_file robometer/configs/fsdp.yaml train.py --config_path=robometer/configs/config.yaml
+uv run accelerate launch --config_file robometer/configs/distributed/fsdp.yaml train.py \
+  data.train_datasets=[rbm-1m-id] \
+  data.eval_datasets=[rbm-1m-ood] \
+  data.max_frames=4 \
+  data.dataset_type=rbm \
+  model.train_progress_head=true \
+  model.train_preference_head=true \
+  model.base_model_id=Qwen/Qwen3-VL-4B-Instruct \
+  model.use_unsloth=true \
+  training.max_steps=5000 \
+  training.per_device_train_batch_size=8 \
+  training.learning_rate=5e-5 \
+  custom_eval.eval_types=[quality_preference,reward_alignment,policy_ranking,confusion_matrix] \
+  custom_eval.reward_alignment=[rbm-1m-ood] \
+  custom_eval.policy_ranking=[rbm-1m-ood] \
+  custom_eval.confusion_matrix=[rbm-1m-ood]
 ```
+
+**LIBERO: train on 10 / object / spatial / goal, test on 90.**
+
+```bash
+uv run accelerate launch --config_file robometer/configs/distributed/fsdp.yaml train.py \
+  data.train_datasets=[libero_pi0] \
+  data.eval_datasets=[libero_pi0] \
+  data.max_frames=4 \
+  data.dataset_type=rbm \
+  model.train_progress_head=true \
+  model.train_preference_head=true \
+  model.base_model_id=Qwen/Qwen3-VL-4B-Instruct \
+  model.use_unsloth=true \
+  training.max_steps=5000 \
+  training.per_device_train_batch_size=8 \
+  training.learning_rate=5e-5 \
+  custom_eval.eval_types=[quality_preference,reward_alignment] \
+  custom_eval.reward_alignment=[libero_pi0] \
+  custom_eval.policy_ranking=[libero_pi0]
+```
+
+See `robometer/configs/experiment_configs.py` and `old/run_scripts/` for more options (e.g. `data.sample_type_ratio`, `data.preference_strategy_ratio`, `training.exp_name`).
 
 ### Baseline evaluation (all models)
 
@@ -168,7 +207,6 @@ If you prefer not to use the processed datasets:
 ```bash
 export ROBOMETER_DATASET_PATH=/path/to/your/robometer_dataset
 ./scripts/download_data.sh
-# Optional: RFM_DOWNLOAD_METHOD=git ./scripts/download_data.sh
 
 # Preprocess
 uv run python -m robometer.data.scripts.preprocess_datasets --config robometer/configs/preprocess.yaml

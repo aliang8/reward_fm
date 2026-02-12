@@ -142,15 +142,13 @@ def load_frames_from_npz(npz_filepath: str) -> np.ndarray:
     if not npz_filepath:
         raise ValueError("npz_filepath is None or empty")
 
-    # If path is relative, prepend ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH)
+    # If path is relative, prepend ROBOMETER_PROCESSED_DATASETS_PATH
     if not os.path.isabs(npz_filepath):
-        rfm_dataset_path = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get(
-            "RFM_PROCESSED_DATASETS_PATH", ""
-        )
+        processed_root = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH", "")
         # Normalize: strip processed_datasets when env points to repo root
-        rfm_dataset_path = rfm_dataset_path.replace("processed_datasets", "")
-        if rfm_dataset_path:
-            npz_filepath = os.path.join(rfm_dataset_path, npz_filepath)
+        processed_root = processed_root.replace("processed_datasets", "")
+        if processed_root:
+            npz_filepath = os.path.join(processed_root, npz_filepath)
 
     if not os.path.exists(npz_filepath):
         raise ValueError(f"NPZ file not found: {npz_filepath}")
@@ -179,16 +177,14 @@ def load_embeddings_from_path(embeddings_path: str) -> torch.Tensor:
         ipdb.set_trace()
         raise ValueError(f"embeddings_path: {embeddings_path} is None or empty")
 
-    # If path is relative, prepend ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH)
+    # If path is relative, prepend ROBOMETER_PROCESSED_DATASETS_PATH
     if not os.path.isabs(embeddings_path):
-        rfm_dataset_path = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get(
-            "RFM_PROCESSED_DATASETS_PATH", ""
-        )
+        processed_root = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH", "")
         # Normalize: strip processed_datasets when env points to repo root
-        rfm_dataset_path = rfm_dataset_path.replace("processed_datasets/", "")
-        rfm_dataset_path = rfm_dataset_path.replace("processed_datasets", "")
-        if rfm_dataset_path:
-            embeddings_path = os.path.join(rfm_dataset_path, embeddings_path)
+        processed_root = processed_root.replace("processed_datasets/", "")
+        processed_root = processed_root.replace("processed_datasets", "")
+        if processed_root:
+            embeddings_path = os.path.join(processed_root, embeddings_path)
 
     with open(embeddings_path, "rb") as f:
         embeddings_data = torch.load(f, map_location="cpu")
@@ -677,10 +673,10 @@ def create_trajectory_from_dict(traj_dict: Dict[str, Any], overrides: Optional[D
 def show_available_datasets():
     """Show which datasets are available in the cache."""
     # The preprocessing script now creates individual cache directories for each dataset/subset pair
-    cache_dir = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH") or os.environ.get("RFM_PROCESSED_DATASETS_PATH", "")
+    cache_dir = os.environ.get("ROBOMETER_PROCESSED_DATASETS_PATH", "")
     if not cache_dir:
         raise ValueError(
-            "ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH) not set. Set it to the directory containing your processed datasets."
+            "ROBOMETER_PROCESSED_DATASETS_PATH not set. Set it to the directory containing your processed datasets."
         )
 
     print("=" * 100)

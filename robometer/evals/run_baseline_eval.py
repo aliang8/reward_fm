@@ -582,7 +582,7 @@ def run_baseline_evaluation(cfg: BaselineEvalConfig, base_data_cfg: DataConfig) 
             eval_results = []
 
             if cfg.reward_model in ["rfm", "rewind", "rbm"]:
-                # For RFM/ReWiND, process dataset using indices to avoid materializing entire dataset
+                # For RBM/ReWiND, process dataset using indices to avoid materializing entire dataset
                 logger.info(f"Processing {len(dataset)} samples in batches for RBM/ReWiND")
 
                 model_config_dict = (

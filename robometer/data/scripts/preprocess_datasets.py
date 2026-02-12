@@ -872,11 +872,10 @@ class DatasetPreprocessor:
             # Loading from HuggingFace Hub - handle video paths
             rank_0_print(f"Loading dataset: {dataset_path}")
 
-            # Check ROBOMETER_DATASET_PATH or RFM_DATASET_PATH (legacy)
-            rfm_dataset_path = os.environ.get("ROBOMETER_DATASET_PATH") or os.environ.get("RFM_DATASET_PATH")
-            if not rfm_dataset_path:
+            dataset_root = os.environ.get("ROBOMETER_DATASET_PATH", "")
+            if not dataset_root:
                 raise ValueError(
-                    "ROBOMETER_DATASET_PATH (or RFM_DATASET_PATH) not set. "
+                    "ROBOMETER_DATASET_PATH not set. "
                     "Set it to the directory containing your downloaded datasets. "
                     "Example: export ROBOMETER_DATASET_PATH=/path/to/your/datasets"
                 )
@@ -884,8 +883,7 @@ class DatasetPreprocessor:
             dataset_name = dataset_path.split("/")[-1]
 
             def patch_path(old_path):
-                # Dataset root from env (ROBOMETER_DATASET_PATH or RFM_DATASET_PATH)
-                root_dir = f"{rfm_dataset_path}/{dataset_name}"
+                root_dir = f"{dataset_root}/{dataset_name}"
                 return f"{root_dir}/{old_path}"  # e.g., "./videos/trajectory_0000.mp4"
 
             # Load dataset
@@ -1085,9 +1083,7 @@ def main(config: DataPreprocessConfig):
 
     print("\n✅ Dataset preprocessing complete!")
     print(f"Unified cache: {config.cache_dir}")
-    print(
-        f"Please set ROBOMETER_PROCESSED_DATASETS_PATH (or RFM_PROCESSED_DATASETS_PATH) to {config.cache_dir} by running:"
-    )
+    print(f"Please set ROBOMETER_PROCESSED_DATASETS_PATH to {config.cache_dir} by running:")
     print(f"export ROBOMETER_PROCESSED_DATASETS_PATH={config.cache_dir}")
 
 

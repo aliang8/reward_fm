@@ -1,6 +1,6 @@
 # USC Koch P-Ranking (Robot-Only) Dataset Guide
 
-This guide explains how to convert the USC Koch robot demonstrations into HuggingFace (HF) format for RFM, **separated by quality**:
+This guide explains how to convert the USC Koch robot demonstrations into HuggingFace (HF) format for Robometer, **separated by quality**:
 
 - `success`
 - `suboptimal`
@@ -45,7 +45,7 @@ uv run python -m dataset_upload.generate_hf_dataset \
 
 ## Output Schema
 
-The dataset entries match the standard RFM HF schema and include:
+The dataset entries match the standard Robometer HF schema and include:
 
 - `id`
 - `task`

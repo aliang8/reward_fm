@@ -1,8 +1,8 @@
-# Evaluation Configuration for RFM
+# Evaluation Configuration for RBM (Robometer)
 # This config is used specifically for evaluation runs
 
 # Model path to load training config from
-# model_path: "aliangdw/rfm_prefprog_v4"  # Path to the trained model checkpoint (will load training_config.yaml from here)
+# model_path: "aliangdw/rbm_prefprog_v4"  # Path to the trained model checkpoint (will load training_config.yaml from here)
 # model_path: "aliangdw/rewind-libero-mw-pp-balanced"
 # model_path: "aliangdw/rewind-base-mw-only"
 model_path: "rewardfm/ant-rfm-rewind-bs1024-pref-prog-sim"

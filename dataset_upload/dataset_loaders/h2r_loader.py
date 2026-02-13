@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-H2R dataset loader for the generic dataset converter for RFM model training.
+H2R dataset loader for the generic dataset converter for Robometer model training.
 https://huggingface.co/datasets/dannyXSC/HumanAndRobot
 Human2Robot: Learning Robot Actions from Paired Human-Robot Videos
 This module contains H2R-specific logic for loading and processing HDF5 files.

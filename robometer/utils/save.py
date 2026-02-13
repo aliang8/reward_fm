@@ -305,7 +305,7 @@ class SaveBestCallback(TrainerCallback):
         """Save model, trainer state files, and metrics.
 
         For PEFT models, uses standard PeftModel.save_pretrained() to save adapter weights.
-        Also saves custom heads (progress_head, etc.) which are part of the RFM wrapper.
+        Also saves custom heads (progress_head, etc.) which are part of the RBM wrapper.
 
         Note: This should only be called from rank 0 in the current implementation.
         """
@@ -322,18 +322,18 @@ class SaveBestCallback(TrainerCallback):
         if is_peft:
             # For PEFT models, we need to save:
             # 1. Adapter weights using PeftModel.save_pretrained() (saves adapter_model.safetensors + adapter_config.json)
-            # 2. Custom heads (progress_head, etc.) from RFM wrapper
-            # 3. Other RFM-specific parameters (frame_pool_attn, video_proj, text_proj, etc.)
+            # 2. Custom heads (progress_head, etc.) from RBM wrapper
+            # 3. Other RBM-specific parameters (frame_pool_attn, video_proj, text_proj, etc.)
 
             # Save adapter weights using standard PEFT method
             logger.info("Saving PEFT adapter weights using PeftModel.save_pretrained()")
             base_model.save_pretrained(ckpt_dir)
 
-            # Save custom heads and other RFM-specific parameters
+            # Save custom heads and other RBM-specific parameters
             # These are not part of the PeftModel, so we save them separately
-            rfm_state_dict = {}
+            rbm_state_dict = {}
             for name, param in model.named_parameters():
-                # Include custom heads and other RFM-specific parameters
+                # Include custom heads and other RBM-specific parameters
                 # Exclude base model parameters (handled by PEFT) and adapter parameters (already saved)
                 if (
                     "progress_head" in name
@@ -341,9 +341,9 @@ class SaveBestCallback(TrainerCallback):
                     or "similarity_head" in name
                     or "success_head" in name
                 ):
-                    rfm_state_dict[name] = param.data.cpu()
+                    rbm_state_dict[name] = param.data.cpu()
                 elif "frame_pool_attn" in name or "video_proj" in name or "text_proj" in name:
-                    rfm_state_dict[name] = param.data.cpu()
+                    rbm_state_dict[name] = param.data.cpu()
 
             # Also save non-parameter buffers if any
             for name, buffer in model.named_buffers():
@@ -353,15 +353,15 @@ class SaveBestCallback(TrainerCallback):
                     or "similarity_head" in name
                     or "success_head" in name
                 ):
-                    rfm_state_dict[name] = buffer.cpu()
+                    rbm_state_dict[name] = buffer.cpu()
 
-            if rfm_state_dict:
+            if rbm_state_dict:
                 # Save custom heads to a separate file
                 from safetensors.torch import save_file
 
                 custom_heads_path = os.path.join(ckpt_dir, "custom_heads.safetensors")
-                save_file(rfm_state_dict, custom_heads_path)
-                logger.info(f"Saved {len(rfm_state_dict)} custom head parameters to {custom_heads_path}")
+                save_file(rbm_state_dict, custom_heads_path)
+                logger.info(f"Saved {len(rbm_state_dict)} custom head parameters to {custom_heads_path}")
 
             # Verify that adapter weights were saved
             adapter_config_path = os.path.join(ckpt_dir, "adapter_config.json")

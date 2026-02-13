@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RoboFail dataset loader for the generic dataset converter for RFM model training.
+RoboFail dataset loader for the generic dataset converter for Robometer model training.
 This module contains RoboFail-specific logic for loading and processing data files.
 """
 

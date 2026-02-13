@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LIBERO dataset loader for the generic dataset converter for RFM model training.
+LIBERO dataset loader for the generic dataset converter for Robometer model training.
 This module contains LIBERO-specific logic for loading and processing HDF5 files.
 """
 

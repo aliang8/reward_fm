@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Helper functions for RFM model dataset conversion.
+Helper functions for Robometer model dataset conversion.
 Contains utility functions for processing frames, saving images, and managing data.
 """
 

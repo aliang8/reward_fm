@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FinoNet dataset loader for the generic dataset converter for RFM model training.
+FinoNet dataset loader for the generic dataset converter for Robometer model training.
 https://huggingface.co/datasets/jesbu1/fino-net-dataset
 This module contains FinoNet-specific logic for loading and processing image sequences.
 """

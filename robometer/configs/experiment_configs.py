@@ -165,7 +165,7 @@ class DataConfig:
         default=False,
         metadata={
             "help": "If True, shuffle progress trajectory frames (except the first frame) "
-            "and their corresponding target progress labels during training for RFM heads."
+            "and their corresponding target progress labels during training for RBM heads."
         },
     )
 

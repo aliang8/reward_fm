@@ -1,4 +1,4 @@
-# Configuration for running full-parameter RFM training on multiple GPUs
+# Configuration for running full-parameter RBM (Robometer) training on multiple GPUs
 # using FSDP (Fully Sharded Data Parallelism).
 
 # Environment settings

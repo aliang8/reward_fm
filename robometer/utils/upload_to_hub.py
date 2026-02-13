@@ -90,7 +90,7 @@ license: apache-2.0
 base_model: {base_model}
 tags:
 - reward_model
-- rfm
+- rbm
 - preference_comparisons
 library_name: transformers
 ---

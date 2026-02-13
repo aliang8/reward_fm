@@ -1,5 +1,5 @@
 """
-EgoDex dataset loader for the generic dataset converter for RFM model training.
+EgoDex dataset loader for the generic dataset converter for Robometer model training.
 
 This module provides a simple, readable loader inspired by the LIBERO loader:
 - Discovers (HDF5, MP4) pairs per task directory

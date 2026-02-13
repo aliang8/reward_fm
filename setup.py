@@ -14,7 +14,7 @@ setup(
     version="0.0.1",
     author="Anthony Liang",
     author_email="aliang80@usc.edu",
-    description="Robometer: scaling general-purpose robotic reward models via trajectory comparisons",
+    description="Robometer: Scaling General-purpose Robotic Reward Models via Trajectory Comparisons",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/aliang8/reward_fm",
@@ -34,7 +34,6 @@ setup(
     python_requires=">=3.10",
     entry_points={
         "console_scripts": [
-            "robometer-visualizer=rfm_visualizer.app:main",
             "robometer-train=train:main",
         ],
     },

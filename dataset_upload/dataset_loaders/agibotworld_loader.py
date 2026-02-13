@@ -1,5 +1,5 @@
 """
-AgiBotWorld dataset loader for the generic dataset converter for RFM model training.
+AgiBotWorld dataset loader for the generic dataset converter for Robometer model training.
 This module contains AgiBotWorld-specific logic for loading and processing data using
 HuggingFace streaming to efficiently handle large datasets.
 """

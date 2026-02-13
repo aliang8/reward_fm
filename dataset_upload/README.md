@@ -192,7 +192,7 @@ uv run python data/generate_hf_dataset.py \
     --config_path=configs/dataset_.yaml \
     --dataset.dataset_name=your_dataset \
     --dataset.dataset_path=/path/to/your/dataset \
-    --output.output_dir=your_dataset_rfm \
+    --output.output_dir=your_robometer_dataset \
     --output.max_trajectories=1000 \
     --output.max_frames=-1 \
     --output.use_video=true \

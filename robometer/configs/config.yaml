@@ -1,7 +1,7 @@
 # @package _global_
 
-# RFM (Reward Foundation Model) Configuration
-# Configuration file for training and evaluating the RFM model with three objectives
+# Robometer (RBM) Configuration
+# Configuration file for training and evaluating the RBM model with three objectives
 
 defaults:
   - base_config
@@ -205,7 +205,7 @@ training:
   vision_encoder_lr: 1e-5  # Learning rate for last N vision encoder layers. If null, uses the same LR as other parameters.
   vision_encoder_num_layers: 3  # Number of last vision encoder layers to fine-tune with vision_encoder_lr. Only used if vision_encoder_lr is set.
 
-  # RFM specific settings
+  # RBM-specific settings
   predict_pref_progress: true
 
 # =====================================================================================
@@ -227,7 +227,7 @@ logging:
   log_to: []
   wandb_project: "robometer"
   wandb_entity: clvr
-  wandb_notes: "training RFM"
+  wandb_notes: "training Robometer"
   
   # SaveBestCallback configuration
   save_best:

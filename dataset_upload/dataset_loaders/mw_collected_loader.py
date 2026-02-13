@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Metaworld dataset loader for the generic dataset converter for RFM model training.
+Metaworld dataset loader for the generic dataset converter for Robometer model training.
 This module contains logic for loading metaworld data organized by task and quality.
 
 uv run python dataset_upload/generate_hf_dataset.py \
@@ -47,7 +47,7 @@ def apply_center_crop_to_frames(frames: np.ndarray) -> np.ndarray:
 
 
 def map_quality_label(original_label: str) -> str:
-    """Map original quality labels to standardized RFM labels."""
+    """Map original quality labels to standardized Robometer labels."""
     label_mapping = {"GT": "successful", "success": "successful", "all_fail": "failure", "close_succ": "suboptimal"}
     return label_mapping.get(original_label, original_label)
 

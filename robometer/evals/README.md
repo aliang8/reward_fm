@@ -8,7 +8,7 @@ The baseline evaluation system supports several baseline models:
 - **GVL** (Gemini Video Language): Progress prediction using Gemini API
 - **RL-VLM-F** (RL-VLM-F): Preference comparison using Vision-Language Models (Gemini or OpenAI)
 - **VLAC**: Progress prediction using the VLAC model
-- **RFM/ReWiND**: Progress prediction and preference comparison using trained RFM or ReWiND models
+- **RBM/ReWiND**: Progress prediction and preference comparison using trained RBM (Robometer) or ReWiND models
 
 ## Evaluation Types
 
@@ -42,7 +42,7 @@ export OPENAI_API_KEY="your-openai-api-key"
 
 For **VLAC**, you need to:
 
-1. **Create a separate virtual environment** (required because VLAC dependencies conflict with RFM dependencies):
+1. **Create a separate virtual environment** (required because VLAC dependencies conflict with RBM dependencies):
    ```bash
    uv venv .venv-vlac
    uv pip install -e ".[vlac]" --python .venv-vlac/bin/python
@@ -75,12 +75,12 @@ For **VLAC**, you need to:
    ```
    Run from the repo root. The config key is still `reward_model=robodopamine`.
 
-### RFM/ReWiND Model Setup
+### RBM/ReWiND Model Setup
 
-For **RFM/ReWiND**, you need to provide:
-1. `rfm_checkpoint_path`: Path to model checkpoint (HuggingFace repo ID or local path)
-   - The config.yaml will be loaded automatically from the checkpoint
-2. Optionally set `rfm_batch_size` for inference batch size (default: 32)
+For **RBM/ReWiND**, you need to provide:
+1. `model_path`: Path to model checkpoint (HuggingFace repo ID or local path)
+   - The config will be loaded automatically from the checkpoint when applicable
+2. Optionally set `model_config.batch_size` for inference batch size (default: 32)
 
 
 ### Output
@@ -177,11 +177,11 @@ uv run --extra vlac --python .venv-vlac/bin/python -m robometer.evals.run_baseli
   custom_eval.num_examples_per_quality_pr=2 \
   custom_eval.use_frame_steps=false
 
-# 4. RFM/ReWiND - All Evaluation Types (Progress + Preference)
+# 4. RBM/ReWiND - All Evaluation Types (Progress + Preference)
 uv run python -m robometer.evals.run_baseline_eval \
-  reward_model=rfm \
-  rfm_checkpoint_path="rewardfm/rfm_qwen_pref_prog_2frames_franka" \
-  rfm_batch_size=32 \
+  reward_model=rbm \
+  model_path="rewardfm/rbm_qwen_pref_prog_2frames_franka" \
+  model_config.batch_size=32 \
   custom_eval.eval_types="[reward_alignment,policy_ranking,quality_preference]" \
   custom_eval.reward_alignment="[oxe,mw,reward_alignment]" \
   custom_eval.policy_ranking="[policy_ranking]" \

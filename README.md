@@ -3,10 +3,10 @@
 [![arXiv](https://img.shields.io/badge/arXiv-Coming%20Soon-b31b1b.svg)](https://arxiv.org/)
 [![GitHub](https://img.shields.io/badge/GitHub-reward__fm-181717?logo=github)](https://github.com/aliang8/robometer)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Model](https://img.shields.io/badge/🤗%20Model-FFD21E?logo=huggingface)](https://huggingface.co/aliangdw/Robometer-4B)
-[![Dataset](https://img.shields.io/badge/🤗%20Dataset-RBM--1M-FFD21E?logo=huggingface)](https://huggingface.co/datasets/)
-[![RBM-1M Visualizer](https://img.shields.io/badge/🖼️%20RBM-1M%20Visualizer-FFD21E?logo=huggingface)](https://huggingface.co/spaces/rewardfm/visualizer)
-[![RewardEval UI](https://img.shields.io/badge/📊%20RewardEval%20UI-FFD21E?logo=huggingface)](https://huggingface.co/spaces/rewardfm/rewardeval_ui)
+[![Model](https://img.shields.io/badge/Model-FFD21E?logo=huggingface)](https://huggingface.co/aliangdw/Robometer-4B)
+[![Dataset](https://img.shields.io/badge/Dataset-RBM--1M-FFD21E?logo=huggingface)](https://huggingface.co/datasets/)
+[![RBM-1M Visualizer](https://img.shields.io/badge/RBM1M%20Visualizer-FFD21E?logo=huggingface)](https://huggingface.co/spaces/rewardfm/visualizer)
+[![RewardEval UI](https://img.shields.io/badge/%20RewardEval%20UI-FFD21E?logo=huggingface)](https://huggingface.co/spaces/rewardfm/rewardeval_ui)
 
 <p align="center">
   <img src="assets/robometer.jpg" alt="Robometer" width="100%"/>

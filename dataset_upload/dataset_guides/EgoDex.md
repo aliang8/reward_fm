@@ -1,6 +1,6 @@
 # EgoDex Dataset Guide
 
-EgoDex is a large-scale egocentric manipulation dataset with **native iterative loading** and **advanced video processing** for the RFM training pipeline.
+EgoDex is a large-scale egocentric manipulation dataset with **native iterative loading** and **advanced video processing** for the Robometer training pipeline.
 
 ## Overview
 
@@ -290,9 +290,9 @@ for part in part1 part2 part3 part4 part5; do
 done
 ```
 
-## Integration with RFM Training
+## Integration with Robometer Training
 
-The generated dataset is compatible with the standard RFM training pipeline:
+The generated dataset is compatible with the standard Robometer training pipeline:
 
 ```bash
 # Use the processed dataset for training

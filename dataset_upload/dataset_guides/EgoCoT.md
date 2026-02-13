@@ -1,6 +1,6 @@
 # EgoCoT Dataset Guide
 
-This guide provides detailed instructions for integrating and using the EgoCoT (Egocentric Chain-of-Thought) dataset with the RFM training pipeline.
+This guide provides detailed instructions for integrating and using the EgoCoT (Egocentric Chain-of-Thought) dataset with the Robometer training pipeline.
 
 Location: https://github.com/EmbodiedGPT/EgoCOT_Dataset
 
@@ -190,9 +190,9 @@ for task_name, trajectories in task_data.items():
         print(f"  Quality: {traj['quality_label']} (score: {traj['partial_success']})")
 ```
 
-## Integration with RFM Pipeline
+## Integration with Robometer Pipeline
 
-The EgoCoT loader is fully compatible with the RFM training pipeline. The egocentric nature of the data makes it particularly suitable for:
+The EgoCoT loader is fully compatible with the Robometer training pipeline. The egocentric nature of the data makes it particularly suitable for:
 
 *   **First-person action recognition**
 *   **Embodied planning and reasoning**

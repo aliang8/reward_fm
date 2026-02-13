@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Shared prediction heads plugin for RFM and ReWiND models.
+Shared prediction heads plugin for RBM and ReWiND models.
 Provides a mixin class that models can inherit from to get prediction heads.
 """
 

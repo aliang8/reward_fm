@@ -1,6 +1,6 @@
 # RoboReward Dataset Guide
 
-This guide explains how to load and convert the RoboReward dataset with the RFM pipeline.
+This guide explains how to load and convert the RoboReward dataset with the Robometer pipeline.
 
 Sources:
 - Paper: [RoboReward: General-Purpose Vision-Language Reward Models for Robotics](https://arxiv.org/abs/2601.00675)

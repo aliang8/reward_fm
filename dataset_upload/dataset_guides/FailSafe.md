@@ -1,6 +1,6 @@
 # FailSafe Dataset Guide
 
-This guide explains how to integrate and use the FailSafe dataset (correctdata_v2) with the RFM pipeline.
+This guide explains how to integrate and use the FailSafe dataset (correctdata_v2) with the Robometer pipeline.
 
 Source: `https://huggingface.co/datasets/onepiece1999/correctdata_v2/tree/main`
 

@@ -1,11 +1,11 @@
-# RFM MIT Franka Dataset Guide
+# Robometer MIT Franka Dataset Guide
 
-This guide explains how to integrate and use the RFM MIT Franka dataset with the RFM pipeline.
+This guide explains how to integrate and use the Robometer MIT Franka dataset with the Robometer pipeline.
 Source: https://drive.google.com/drive/folders/1dd62YeKY9-bTeK5fkjljzoFkNX2uZ1YD?usp=sharing
 
 ## Overview
 
-- RFM MIT Franka is a robotics dataset with quality-labeled trajectories for manipulation tasks
+- Robometer MIT Franka is a robotics dataset with quality-labeled trajectories for manipulation tasks
 - The dataset contains pre-recorded MP4 videos organized by task and quality level
 - Quality labels include: **successful**, **suboptimal**, and **failure**
 - Each trajectory has two camera views: **external (ext)** and **wrist**
@@ -15,7 +15,7 @@ Source: https://drive.google.com/drive/folders/1dd62YeKY9-bTeK5fkjljzoFkNX2uZ1YD
 The dataset is organized as follows:
 
 ```
-RFM_MIT_Franka/
+ROBOMETER_MIT_Franka/
   foldtowel/
     success/
       Tue_Jan_20_23_49_14_2026_ext.mp4
@@ -70,12 +70,12 @@ Configuration file: `dataset_upload/configs/data_gen_configs/new_mit_franka.yaml
 
 ```yaml
 dataset:
-  dataset_path: ~/robometer/datasets/RFM_MIT_Franka
+  dataset_path: ~/robometer/datasets/ROBOMETER_MIT_Franka
   dataset_name: rfm_new_mit_franka_rfm
   exclude_wrist_cam: false  # Set to true to only process external camera views
 
 output:
-  output_dir: ./rfm_dataset/rfm_new_mit_franka_rfm
+  output_dir: ./robometer_dataset/rfm_new_mit_franka_rfm
   max_trajectories: -1  # -1 for all trajectories
   max_frames: 32
   use_video: true
@@ -169,7 +169,7 @@ These mappings are defined in the loader file (`new_mit_franka_loader.py`) and c
 ## Troubleshooting
 
 ### Video File Not Found
-- Ensure the dataset path points to the RFM_MIT_Franka directory
+- Ensure the dataset path points to the ROBOMETER_MIT_Franka directory
 - Check that video files exist in the expected task/quality subfolders
 
 ### Missing Task Folders

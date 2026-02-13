@@ -1,9 +1,7 @@
 # @package _global_
-
-# RFM model configuration
-reward_model: "rfm"
-
-model_path: null  # Path to RFM model checkpoint (HuggingFace repo ID or local path, required)
+# Alias for rbm (legacy config name; use reward_model/rbm.yaml)
+reward_model: "rbm"
+model_path: null  # Path to RBM model checkpoint (HuggingFace repo ID or local path, required)
 
 model_config:
   batch_size: 32

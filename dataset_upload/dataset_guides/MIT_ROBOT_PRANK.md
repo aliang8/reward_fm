@@ -1,6 +1,6 @@
 # MIT-Franka-P-Rank Dataset Guide
 
-This guide explains how to integrate and use the MIT-Franka-P-Rank dataset with the RFM pipeline.
+This guide explains how to integrate and use the MIT-Franka-P-Rank dataset with the Robometer pipeline.
 
 ## Overview
 
@@ -58,7 +58,7 @@ dataset:
   dataset_name: mit_franka_p-rank_rfm
 
 output:
-  output_dir: ./rfm_dataset/mit_franka_p-rank_rfm
+  output_dir: ./robometer_dataset/mit_franka_p-rank_rfm
   max_trajectories: -1  # -1 for all trajectories
   max_frames: 64
   use_video: true

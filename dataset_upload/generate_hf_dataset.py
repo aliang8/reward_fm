@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Main dataset converter that can convert any dataset to HuggingFace format for RFM model training.
+Main dataset converter that can convert any dataset to HuggingFace format for Robometer model training.
 This is a generic converter that works with any dataset-specific loader.
 """
 
@@ -53,7 +53,7 @@ def push_hf_dataset_and_video_files_to_hub(dataset, hub_repo_id, hub_token, data
         config_name=dataset_name.lower(),
         token=hub_token,
         private=False,
-        commit_message=f"Add {dataset_name} dataset for RFM training",
+        commit_message=f"Add {dataset_name} dataset for Robometer training",
     )
     print(f"✅ Successfully pushed dataset to: https://huggingface.co/datasets/{hub_repo_id}")
     api = HfApi(token=hub_token)
@@ -109,7 +109,7 @@ class DatasetConfig:
 class OutputConfig:
     """Config for output settings"""
 
-    output_dir: str = field(default="rfm_dataset", metadata={"help": "Output directory for the dataset"})
+    output_dir: str = field(default="robometer_dataset", metadata={"help": "Output directory for the dataset"})
     max_trajectories: int = field(
         default=None, metadata={"help": "Maximum number of trajectories to process (None for all)"}
     )
@@ -362,7 +362,7 @@ def convert_dataset_to_hf_format(
                 config_name=dataset_name.lower(),  # Use dataset name as config name
                 token=hub_token,
                 private=False,
-                commit_message=f"Add {dataset_name} dataset for RFM training",
+                commit_message=f"Add {dataset_name} dataset for Robometer training",
             )
             print(f"✅ Successfully pushed dataset to: https://huggingface.co/datasets/{hub_repo_id}")
             print(f"📁 Dataset available as config: {dataset_name.lower()}")
@@ -446,7 +446,7 @@ def main(cfg: GenerateConfig):
                     config_name=(cfg.dataset.dataset_name or "agibotworld").lower(),
                     token=cfg.hub.hub_token,
                     private=False,
-                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for RFM training",
+                    commit_message=f"Add {cfg.dataset.dataset_name} dataset for Robometer training",
                 )
                 print(f"✅ Successfully pushed dataset to: https://huggingface.co/datasets/{cfg.hub.hub_repo_id}")
 

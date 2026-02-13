@@ -62,7 +62,7 @@ class RBMModel:
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
 
-        # Determine if this is ReWiND or RFM
+        # Determine if this is ReWiND or RBM
         self.is_rewind = "rewind" in exp_config.model.base_model_id.lower()
         logger.info(f"Model type: {'ReWiND' if self.is_rewind else 'RBM'}")
 

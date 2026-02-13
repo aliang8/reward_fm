@@ -1,6 +1,6 @@
-# RFM-MIT-Franka Dataset Configuration
+# Robometer MIT Franka Dataset Configuration
 dataset:
-  dataset_path: ~/robometer/datasets/RFM_MIT_Franka  # Path to dataset directory
+  dataset_path: ~/robometer/datasets/ROBOMETER_MIT_Franka  # Path to dataset directory
   dataset_name: rfm_new_mit_franka_rfm_nowrist
   exclude_wrist_cam: true  # Set to true to only process external camera views
 

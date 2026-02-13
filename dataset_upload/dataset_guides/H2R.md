@@ -1,6 +1,6 @@
 # H2R Dataset Guide
 
-This guide explains how to integrate and use the H2R (Human2Robot) dataset with the RFM training pipeline.
+This guide explains how to integrate and use the H2R (Human2Robot) dataset with the Robometer training pipeline.
 
 Source: `https://huggingface.co/datasets/dannyXSC/HumanAndRobot`
 Paper: `https://arxiv.org/abs/2502.16587`

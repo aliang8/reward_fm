@@ -1,6 +1,6 @@
 # USC Koch Human-Robot Paired Dataset Guide
 
-This guide explains how to integrate and use the USC Koch Human-Robot Paired dataset with the RFM pipeline.
+This guide explains how to integrate and use the USC Koch Human-Robot Paired dataset with the Robometer pipeline.
 
 ## Quick Start
 
@@ -292,7 +292,7 @@ bash dataset_upload/data_scripts/usc_koch_human_robot_paired/download_datasets.s
 
 ### Human Demonstrations
 ```
-rfm_dataset/usc_koch_human_robot_paired_human/
+robometer_dataset/usc_koch_human_robot_paired_human/
   usc_koch_human_robot_paired_human/
     shard_0000/
       episode_000000/

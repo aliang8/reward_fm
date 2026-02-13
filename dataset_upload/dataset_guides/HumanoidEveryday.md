@@ -1,6 +1,6 @@
 # Humanoid Everyday Dataset Guide
 
-This guide explains how to integrate and use the Humanoid Everyday dataset with the RFM training pipeline.
+This guide explains how to integrate and use the Humanoid Everyday dataset with the Robometer training pipeline.
 
 Source: `https://github.com/ausbxuse/Humanoid-Everyday`
 
@@ -117,7 +117,7 @@ dataset:
   dataset_name: humanoid_everyday_rfm
 
 output:
-  output_dir: ./rfm_dataset/humanoid_everyday_rfm
+  output_dir: ./robometer_dataset/humanoid_everyday_rfm
   max_trajectories: -1
   max_frames: 64
   use_video: true

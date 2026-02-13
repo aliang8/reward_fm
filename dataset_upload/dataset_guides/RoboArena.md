@@ -1,6 +1,6 @@
 # RoboArena Dataset Guide
 
-This guide provides detailed instructions for integrating and using the RoboArena dataset with the RFM training pipeline.
+This guide provides detailed instructions for integrating and using the RoboArena dataset with the Robometer training pipeline.
 
 Location: https://huggingface.co/datasets/RoboArena/DataDump_08-05-2025
 

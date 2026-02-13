@@ -1,6 +1,6 @@
 # Custom Dataset Guide
 
-Learn how to add your own dataset (like DROID, Bridge, etc.) to the RFM training pipeline.
+Learn how to add your own dataset (like DROID, Bridge, etc.) to the Robometer training pipeline.
 
 ## Overview
 
@@ -39,7 +39,7 @@ Create `data/{dataset_name}_loader.py`:
 ```python
 #!/usr/bin/env python3
 """
-{DatasetName} dataset loader for RFM model training.
+{DatasetName} dataset loader for Robometer model training.
 """
 
 import os

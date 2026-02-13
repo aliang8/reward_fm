@@ -20,7 +20,7 @@ class EvalServerConfig:
 
     # Model path to load training config from
     model_path: str = field(
-        default="./rfm_model_output/checkpoint-1000",
+        default="./rbm_model_output/checkpoint-1000",
         metadata={"help": "Path to the trained model checkpoint (will load training_config.yaml from here)"},
     )
 
@@ -43,7 +43,7 @@ class OfflineEvalConfig:
     # Model path (HuggingFace model ID or local checkpoint path)
     model_path: str = field(
         default="",
-        metadata={"help": "HuggingFace model ID (e.g., 'aliangdw/rfm_model') or local checkpoint path"},
+        metadata={"help": "HuggingFace model ID (e.g., 'aliangdw/rbm_model') or local checkpoint path"},
     )
 
     # Output directory for evaluation results
@@ -192,11 +192,11 @@ class RoboDopamineConfig:
 class BaselineEvalConfig:
     """Configuration for baseline evaluation runs (run_baseline_eval.py)."""
 
-    # Reward model discriminator: "gvl", "vlac", "rlvlmf", "rfm", "rewind", "roboreward", or "robodopamine"
+    # Reward model discriminator: "gvl", "vlac", "rlvlmf", "rbm", "rewind", "roboreward", or "robodopamine"
     reward_model: str = field(
         default="rlvlmf",
         metadata={
-            "help": "Reward model: 'gvl', 'vlac', 'robodopamine' for progress; 'rlvlmf' for preference; 'rfm', 'rewind' for trained models; 'roboreward' for RoboReward baseline"
+            "help": "Reward model: 'gvl', 'vlac', 'robodopamine' for progress; 'rlvlmf' for preference; 'rbm', 'rewind' for trained models; 'roboreward' for RoboReward baseline"
         },
     )
 
@@ -209,7 +209,7 @@ class BaselineEvalConfig:
     model_path: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Path to model checkpoint (HuggingFace repo ID or local path). Used by vlac, rfm, rewind, and roboreward models."
+            "help": "Path to model checkpoint (HuggingFace repo ID or local path). Used by vlac, rbm, rewind, and roboreward models."
         },
     )
     max_frames: int = field(
@@ -254,7 +254,7 @@ class BaselineEvalConfig:
                 self.model_config = GVLConfig(**(self.model_config or {}))
             elif self.reward_model == "vlac":
                 self.model_config = VLACConfig(**(self.model_config or {}))
-            elif self.reward_model in ["rfm", "rewind", "rbm"]:
+            elif self.reward_model in ["rewind", "rbm"]:
                 self.model_config = RBMConfig(**(self.model_config or {}))
             elif self.reward_model == "roboreward":
                 self.model_config = RoboRewardConfig(**(self.model_config or {}))
@@ -263,7 +263,7 @@ class BaselineEvalConfig:
             else:
                 raise ValueError(
                     f"Unknown reward_model: {self.reward_model}. "
-                    f"Must be 'rlvlmf', 'gvl', 'vlac', 'rfm', 'rewind', 'roboreward', or 'robodopamine'"
+                    f"Must be 'rlvlmf', 'gvl', 'vlac', 'rbm', 'rewind', 'roboreward', or 'robodopamine'"
                 )
 
 

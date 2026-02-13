@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simple validation script for the RFM dataset format.
+Simple validation script for the Robometer dataset format.
 Checks fields and data types only.
 """
 

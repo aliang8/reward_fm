@@ -1,6 +1,6 @@
 # Koch Arm UT Dallas dataset config
 dataset:
-  dataset_path: ./raw_data/RFM_UTD_Eval
+  dataset_path: ./raw_data/ROBOMETER_UTD_Eval
   dataset_name: utd_so101_policy_ranking
 
 output:

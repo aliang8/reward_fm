@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Setup script for the RFM package.
+Setup script for the Robometer package.
 """
 
 from setuptools import find_packages, setup
@@ -10,11 +10,11 @@ with open("README.md", encoding="utf-8") as fh:
     long_description = fh.read()
 
 setup(
-    name="rfm",
+    name="robometer",
     version="0.0.1",
     author="Anthony Liang",
     author_email="aliang80@usc.edu",
-    description="PyTorch implementation of a Reward Foundation Model (RFM)",
+    description="Robometer: scaling general-purpose robotic reward models via trajectory comparisons",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/aliang8/reward_fm",
@@ -34,8 +34,8 @@ setup(
     python_requires=">=3.10",
     entry_points={
         "console_scripts": [
-            "rfm-visualizer=rfm_visualizer.app:main",
-            "rfm-train=train:main",
+            "robometer-visualizer=rfm_visualizer.app:main",
+            "robometer-train=train:main",
         ],
     },
     include_package_data=True,

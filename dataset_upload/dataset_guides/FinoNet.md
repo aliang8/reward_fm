@@ -1,6 +1,6 @@
 # FinoNet Dataset Guide
 
-This guide explains how to integrate and use the FinoNet dataset with the RFM training pipeline.
+This guide explains how to integrate and use the FinoNet dataset with the Robometer training pipeline.
 
 Source: `https://huggingface.co/datasets/jesbu1/fino-net-dataset`
 

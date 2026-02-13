@@ -321,7 +321,7 @@ def train(cfg: ExperimentConfig):
 
 @hydra_main(version_base=None, config_path="robometer/configs", config_name="config")
 def main(cfg: DictConfig):
-    banner("Starting RFM Training")
+    banner("Starting Robometer Training")
 
     # Convert Hydra config to dataclass
     exp_cfg = convert_hydra_to_dataclass(cfg, ExperimentConfig)
@@ -331,7 +331,7 @@ def main(cfg: DictConfig):
 
     if exp_cfg.mode == "train":
         if is_rank_0():
-            rprint(Panel.fit("🚀 Starting RFM Training", style="bold green"))
+            rprint(Panel.fit("🚀 Starting Robometer Training", style="bold green"))
         train(exp_cfg)
     else:
         raise ValueError(f"Unknown mode: {exp_cfg.mode}. Must be 'train' or 'evaluate'")

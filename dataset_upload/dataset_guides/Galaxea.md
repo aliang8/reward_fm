@@ -1,6 +1,6 @@
 # Galaxea Open-World Dataset Guide
 
-This guide explains how to integrate and use the Galaxea Open-World RLDS dataset with the RFM training pipeline.
+This guide explains how to integrate and use the Galaxea Open-World RLDS dataset with the Robometer training pipeline.
 
 Source: `https://huggingface.co/datasets/OpenGalaxea/Galaxea-Open-World-Dataset`
 

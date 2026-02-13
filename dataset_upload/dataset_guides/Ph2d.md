@@ -1,6 +1,6 @@
 # Ph2d Dataset Guide
 
-This guide explains how to integrate and use the Ph2d dataset with the RFM training pipeline.
+This guide explains how to integrate and use the Ph2d dataset with the Robometer training pipeline.
 
 ## Overview
 
@@ -48,7 +48,7 @@ dataset:
   camera: right  # or left
 
 output:
-  output_dir: ./rfm_dataset/ph2d_rfm
+  output_dir: ./robometer_dataset/ph2d_rfm
   max_trajectories: -1
   max_frames: -1
   use_video: true

@@ -1,6 +1,6 @@
 # LIBERO Dataset Guide
 
-LIBERO is a benchmark for lifelong robot learning with built-in support in the RFM training pipeline.
+LIBERO is a benchmark for lifelong robot learning with built-in support in the Robometer training pipeline.
 
 ## Overview
 
@@ -166,7 +166,7 @@ uv run python data/generate_hf_dataset.py \
     --output.max_trajectories=100  # Limit trajectories
 ```
 
-## Integration with RFM Training
+## Integration with Robometer Training
 
 ```bash
 # Train on processed LIBERO dataset

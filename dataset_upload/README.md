@@ -1,6 +1,6 @@
-# Adding New Datasets to RFM
+# Adding New Datasets to Robometer
 
-This guide explains how to add new datasets to the Reward Foundation Model (RFM) training pipeline.
+This guide explains how to add new datasets to the Robometer training pipeline.
 
 ## Supported Datasets
 
@@ -84,7 +84,7 @@ Example: `droid_loader.py` or `bridge_loader.py`
 ```python
 #!/usr/bin/env python3
 """
-DROID dataset loader for the generic dataset converter for RFM model training.
+DROID dataset loader for the generic dataset converter for Robometer model training.
 This module contains DROID-specific logic for loading and processing data.
 """
 
@@ -204,7 +204,7 @@ uv run python data/generate_hf_dataset.py \
 ### Visualize the Dataset
 
 ```bash
-uv run python visualize_dataset.py --dataset_path=your_dataset_rfm/your_dataset_name
+uv run python visualize_dataset.py --dataset_path=your_robometer_dataset/your_dataset_name
 ```
 
 ## Dataset-Specific Guides
@@ -221,4 +221,4 @@ Each guide includes:
 - ✅ Configuration examples
 - ✅ Troubleshooting tips
 - ✅ Performance notes
-- ✅ Integration with RFM training
+- ✅ Integration with Robometer training

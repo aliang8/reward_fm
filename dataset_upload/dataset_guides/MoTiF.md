@@ -1,6 +1,6 @@
 # MoTiF Dataset Guide
 
-This guide explains how to integrate and use the MoTiF-1K dataset with the RFM data pipeline using a FrameLoader (no HuggingFace conversion required).
+This guide explains how to integrate and use the MoTiF-1K dataset with the Robometer data pipeline using a FrameLoader (no HuggingFace conversion required).
 
 Source: `https://github.com/Minyoung1005/motif#data-structure`
 

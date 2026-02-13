@@ -1,6 +1,6 @@
 # MolmoAct Dataset Guide
 
-This guide explains how to integrate and use the MolmoAct LeRobot dataset with the RFM training pipeline.
+This guide explains how to integrate and use the MolmoAct LeRobot dataset with the Robometer training pipeline.
 
 Source: `https://huggingface.co/datasets/allenai/MolmoAct-Dataset`
 

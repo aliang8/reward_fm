@@ -1,6 +1,6 @@
 # HAND_paired_data Dataset Guide
 
-This guide explains how to load and convert a subset of the HAND dataset with the RFM pipeline from [HAND](https://liralab.usc.edu/handretrieval/).
+This guide explains how to load and convert a subset of the HAND dataset with the Robometer pipeline from [HAND](https://liralab.usc.edu/handretrieval/).
 
 ## Overview
 

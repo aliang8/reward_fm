@@ -1,6 +1,6 @@
 # UTD SO101 Clean Policy Ranking Dataset Guide
 
-This guide explains how to integrate and use the UTD SO101 Clean Policy Ranking dataset with the RFM pipeline.
+This guide explains how to integrate and use the UTD SO101 Clean Policy Ranking dataset with the Robometer pipeline.
 
 ## Overview
 
@@ -15,22 +15,22 @@ The dataset is organized as follows:
 
 ```
 <dataset_path>/
-  RFM_UTD_UNCLUTTER_succ-20251223T020758Z-3-001/
-    RFM_UTD_UNCLUTTER_succ/
+  ROBOMETER_UTD_UNCLUTTER_succ-20251223T020758Z-3-001/
+    ROBOMETER_UTD_UNCLUTTER_succ/
       episode_0_top.gif
       episode_0_wrist.gif
       episode_1_top.gif
       episode_1_wrist.gif
       ...
       vla_task.json
-  RFM_UTD_UNCLUTTER_closs_succ-20251223T020830Z-3-001/
-    RFM_UTD_UNCLUTTER_closs_succ/
+  ROBOMETER_UTD_UNCLUTTER_closs_succ-20251223T020830Z-3-001/
+    ROBOMETER_UTD_UNCLUTTER_closs_succ/
       episode_0_top.gif
       episode_0_wrist.gif
       ...
       vla_task.json
-  RFM_UTD_UNCLUTTER_fail-20251223T020841Z-3-001/
-    RFM_UTD_UNCLUTTER_fail/
+  ROBOMETER_UTD_UNCLUTTER_fail-20251223T020841Z-3-001/
+    ROBOMETER_UTD_UNCLUTTER_fail/
       episode_0_top.gif
       episode_0_wrist.gif
       ...
@@ -234,7 +234,7 @@ After processing, you'll have directory structures like:
 
 ### Wrist View
 ```
-rfm_dataset/utd_so101_clean_policy_ranking_wrist/
+robometer_dataset/utd_so101_clean_policy_ranking_wrist/
   utd_so101_clean_policy_ranking_wrist/
     shard_0000/
       episode_000000/

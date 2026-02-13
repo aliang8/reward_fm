@@ -1,6 +1,6 @@
 # Dataset Guides Overview
 
-This directory contains detailed guides for specific datasets supported by the RFM training pipeline.
+This directory contains detailed guides for specific datasets supported by the Robometer training pipeline.
 
 ## Available Datasets
 

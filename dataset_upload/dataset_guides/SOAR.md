@@ -1,6 +1,6 @@
 # SOAR Dataset Guide
 
-This guide explains how to integrate and use the SOAR RLDS dataset with the RFM pipeline (non-streaming, local TFDS builders).
+This guide explains how to integrate and use the SOAR RLDS dataset with the Robometer pipeline (non-streaming, local TFDS builders).
 
 Source: `https://github.com/rail-berkeley/soar?tab=readme-ov-file#using-soar-data`
 

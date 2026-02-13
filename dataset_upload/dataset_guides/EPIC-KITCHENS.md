@@ -1,6 +1,6 @@
 # EPIC-KITCHENS Dataset Guide
 
-This guide explains how to integrate and use the EPIC-KITCHENS dataset with the RFM training pipeline.
+This guide explains how to integrate and use the EPIC-KITCHENS dataset with the Robometer training pipeline.
 
 Source: `https://epic-kitchens.github.io/`, Lerobot dataset sourced from `https://huggingface.co/datasets/awsaf49/epic_kitchens_100`, (a subset of the original), and `csv` annotations sourced from `https://github.com/epic-kitchens/epic-kitchens-100-annotations/blob/master/EPIC_100_train.csv`.
 

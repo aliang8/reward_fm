@@ -1,6 +1,6 @@
 # AutoEval Dataset Guide
 
-This guide explains how to load and convert the AutoEval pickled evaluation episodes into the RFM pipeline.
+This guide explains how to load and convert the AutoEval pickled evaluation episodes into the Robometer pipeline.
 
 Source: `https://huggingface.co/datasets/zhouzypaul/auto_eval`
 

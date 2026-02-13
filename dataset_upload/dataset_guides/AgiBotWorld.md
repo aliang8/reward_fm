@@ -1,6 +1,6 @@
 # AgiBotWorld Dataset Guide
 
-AgiBotWorld is a large-scale robotic dataset with **native streaming support** and **advanced video processing** for the RFM training pipeline.
+AgiBotWorld is a large-scale robotic dataset with **native streaming support** and **advanced video processing** for the Robometer training pipeline.
 
 ## Overview
 
@@ -182,9 +182,9 @@ uv run python data/generate_hf_dataset.py \
     --hub.push_to_hub=false  # Keep local until ready
 ```
 
-## Integration with RFM Training
+## Integration with Robometer Training
 
-The generated dataset is compatible with the standard RFM training pipeline:
+The generated dataset is compatible with the standard Robometer training pipeline:
 
 ```bash
 # Use the processed dataset for training

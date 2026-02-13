@@ -1,6 +1,6 @@
 # RACER-augmented RLBench Dataset Guide
 
-This guide explains how to load and convert the RACER-augmented RLBench dataset with the RFM pipeline.
+This guide explains how to load and convert the RACER-augmented RLBench dataset with the Robometer pipeline.
 
 Sources:
 - Dataset card: `https://huggingface.co/datasets/sled-umich/RACER-augmented_rlbench`

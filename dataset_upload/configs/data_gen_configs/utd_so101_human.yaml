@@ -1,6 +1,6 @@
 # UTD SO101 Human dataset config
 dataset:
-  dataset_path: ./raw_data/RFM_UTD_Human
+  dataset_path: ./raw_data/ROBOMETER_UTD_Human
   dataset_name: utd_so101_human
 
 output:

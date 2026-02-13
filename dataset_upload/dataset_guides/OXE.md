@@ -1,6 +1,6 @@
 ## OXE (Open-X Embodiment) Dataset Guide
 
-OXE refers to a collection of RLDS-format robot datasets accessible via TensorFlow Datasets (TFDS). This loader unifies many constituent datasets into a single pipeline for RFM dataset generation.
+OXE refers to a collection of RLDS-format robot datasets accessible via TensorFlow Datasets (TFDS). This loader unifies many constituent datasets into a single pipeline for Robometer dataset generation.
 
 ### Overview
 

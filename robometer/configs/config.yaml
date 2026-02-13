@@ -45,7 +45,7 @@ model:
   use_peft: false
   peft_vision_encoder: false
   quantization: false
-  use_unsloth: false  # Set to true to use unsloth for faster training with Qwen models
+  use_unsloth: true  # Set to true to use unsloth for faster training with Qwen models
   progress_loss_type: ${loss.progress_loss_type}  # Type of progress loss: "l1", "l2", or "discrete"
   progress_discrete_bins: ${loss.progress_discrete_bins}  # Number of discrete bins for progress (synced from loss config)
 
@@ -125,9 +125,7 @@ data:
 custom_eval:
   # this section is for adding additional evals like policy ranking, confusion matrix, and alignment etc
   # during training 
-  # eval_types: ["policy_ranking", "confusion_matrix", "reward_alignment"]
-  # eval_types: ["reward_alignment", "policy_ranking"]
-  eval_types: ["reward_alignment"]
+  eval_types: ["policy_ranking", "confusion_matrix", "reward_alignment"]
   policy_ranking: 
     - mw
   confusion_matrix: 

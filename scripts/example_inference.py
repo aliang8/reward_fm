@@ -299,8 +299,10 @@ def post_evaluate_batch_npy(
     eval_server_url: str,
     samples: List[Dict[str, Any]],
     timeout_s: float = 120.0,
+    use_frame_steps: bool = False,
 ) -> Dict[str, Any]:
     files, data = build_multipart_payload(samples)
+    data["use_frame_steps"] = "true" if use_frame_steps else "false"
     url = eval_server_url.rstrip("/") + "/evaluate_batch_npy"
     resp = requests.post(url, files=files, data=data, timeout=timeout_s)
     resp.raise_for_status()
@@ -359,9 +361,15 @@ def compute_rewards_per_frame(
     video_frames: np.ndarray,
     task: str,
     timeout_s: float = 120.0,
+    use_frame_steps: bool = False,
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
     Send the full trajectory to the eval server and get per-frame progress and success.
+
+    Args:
+        use_frame_steps: If True, server expands into frame-step sub-samples (0:1, 0:2, ...)
+            and aggregates; can improve alignment with training. If False, one forward pass on
+            the full trajectory (subsampled to fixed frames on the server).
 
     Returns:
         progress: Per-frame progress (reward) predictions.
@@ -374,7 +382,9 @@ def compute_rewards_per_frame(
         sample_id="0",
         subsequence_length=T,
     )
-    outputs = post_evaluate_batch_npy(eval_server_url, [sample], timeout_s=timeout_s)
+    outputs = post_evaluate_batch_npy(
+        eval_server_url, [sample], timeout_s=timeout_s, use_frame_steps=use_frame_steps
+    )
     return extract_rewards_from_server_output(outputs)
 
 
@@ -405,6 +415,11 @@ def main() -> None:
     )
     parser.add_argument("--timeout-s", type=float, default=120.0, help="HTTP request timeout in seconds (default: 120)")
     parser.add_argument(
+        "--use-frame-steps",
+        action="store_true",
+        help="If set, server uses frame-step expansion (0:1, 0:2, ...) and aggregates; can improve reward alignment",
+    )
+    parser.add_argument(
         "--success-threshold",
         type=float,
         default=0.5,
@@ -428,6 +443,7 @@ def main() -> None:
         video_frames=frames,
         task=args.task,
         timeout_s=float(args.timeout_s),
+        use_frame_steps=args.use_frame_steps,
     )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)

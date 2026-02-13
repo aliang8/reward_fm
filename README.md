@@ -70,55 +70,6 @@ For raw download and preprocessing, see [📥 Download raw datasets](#-download-
 
 ---
 
-### 🔍 Robometer evaluation
-
-Run RBM baselines with `reward_model=rbm` and override `model_path` and `custom_eval.*` as needed. Example commands (see `eval_commands/*.sh` for ReWIND, Robo-Dopamine, VLAC, RoboReward):
-
-**Reward alignment**
-
-```bash
-uv run python robometer/evals/run_baseline_eval.py \
-    reward_model=rbm \
-    model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
-    custom_eval.eval_types=[reward_alignment] \
-    custom_eval.reward_alignment=[rbm-1m-id,rbm-1m-ood] \
-    custom_eval.use_frame_steps=true \
-    custom_eval.subsample_n_frames=5 \
-    custom_eval.reward_alignment_max_trajectories=30 \
-    max_frames=4 \
-    model_config.batch_size=32
-```
-
-**Policy ranking**
-
-```bash
-uv run python robometer/evals/run_baseline_eval.py \
-    reward_model=rbm \
-    model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
-    custom_eval.eval_types=[policy_ranking] \
-    custom_eval.policy_ranking=[rbm-1m-ood] \
-    custom_eval.use_frame_steps=false \
-    custom_eval.num_examples_per_quality_pr=1000 \
-    max_frames=8 \
-    model_config.batch_size=32
-```
-
-**Confusion matrix**
-
-```bash
-uv run python robometer/evals/run_baseline_eval.py \
-    reward_model=rbm \
-    model_path=aliangdw/qwen4b_pref_prog_succ_8_frames_all_part2 \
-    custom_eval.eval_types=[confusion_matrix] \
-    custom_eval.confusion_matrix=[[aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking]] \
-    max_frames=8 \
-    model_config.batch_size=32
-```
-
-Detailed baseline eval docs: [robometer/evals/README.md](robometer/evals/README.md).
-
----
-
 ## 🏋️ Training
 
 ### Training
@@ -149,7 +100,7 @@ uv run accelerate launch --config_file robometer/configs/distributed/fsdp.yaml t
 ```bash
 uv run accelerate launch --config_file robometer/configs/distributed/fsdp.yaml train.py \
   data.train_datasets=[libero_pi0] \
-  data.eval_datasets=[libero_pi0] \
+  data.eval_datasets=[mw] \
   data.max_frames=4 \
   data.dataset_type=rbm \
   model.train_progress_head=true \
@@ -164,21 +115,104 @@ uv run accelerate launch --config_file robometer/configs/distributed/fsdp.yaml t
   custom_eval.policy_ranking=[libero_pi0]
 ```
 
-See `robometer/configs/experiment_configs.py` and `old/run_scripts/` for more options (e.g. `data.sample_type_ratio`, `data.preference_strategy_ratio`, `training.exp_name`).
+See `robometer/configs/experiment_configs.py` for more options (e.g. `data.sample_type_ratio`, `data.preference_strategy_ratio`, `training.exp_name`).
+
+---
+
+## 🔍 Evaluation
+
+### Robometer evaluation
+
+Run RBM baselines with `reward_model=rbm` and override `model_path` and `custom_eval.*` as needed. Example commands (see `eval_commands/*.sh` for ReWIND, Robo-Dopamine, VLAC, RoboReward):
+
+**Reward alignment**
+
+```bash
+uv run python robometer/evals/run_baseline_eval.py \
+    reward_model=rbm \
+    model_path=aliangdw/Robometer-4B \
+    custom_eval.eval_types=[reward_alignment] \
+    custom_eval.reward_alignment=[rbm-1m-id,rbm-1m-ood] \
+    custom_eval.use_frame_steps=true \
+    custom_eval.subsample_n_frames=5 \
+    custom_eval.reward_alignment_max_trajectories=30 \
+    max_frames=4 \
+    model_config.batch_size=32
+```
+
+**Policy ranking**
+
+```bash
+uv run python robometer/evals/run_baseline_eval.py \
+    reward_model=rbm \
+    model_path=aliangdw/Robometer-4B \
+    custom_eval.eval_types=[policy_ranking] \
+    custom_eval.policy_ranking=[rbm-1m-ood] \
+    custom_eval.use_frame_steps=false \
+    custom_eval.num_examples_per_quality_pr=1000 \
+    max_frames=8 \
+    model_config.batch_size=32
+```
+
+**Confusion matrix**
+
+```bash
+uv run python robometer/evals/run_baseline_eval.py \
+    reward_model=rbm \
+    model_path=aliangdw/Robometer-4B \
+    custom_eval.eval_types=[confusion_matrix] \
+    custom_eval.confusion_matrix=[[aliangdw_usc_franka_policy_ranking_usc_franka_policy_ranking,jesbu1_utd_so101_clean_policy_ranking_top_utd_so101_clean_policy_ranking_top,aliangdw_usc_xarm_policy_ranking_usc_xarm_policy_ranking]] \
+    max_frames=8 \
+    model_config.batch_size=32
+```
+
+Detailed baseline eval docs: [robometer/evals/README.md](robometer/evals/README.md).
 
 ### Baseline evaluation (all models)
 
-- **RBM:** use the [reward alignment](#-robometer-evaluation), [policy ranking](#-robometer-evaluation), or [confusion matrix](#-robometer-evaluation) commands above; set `model_path` to your checkpoint.
+- **RBM:** use the [reward alignment](#robometer-evaluation), [policy ranking](#robometer-evaluation), or [confusion matrix](#robometer-evaluation) commands above; set `model_path` to your checkpoint.
 - **ReWIND, Robo-Dopamine, VLAC, RoboReward:** see [robometer/evals/README.md](robometer/evals/README.md) and `eval_commands/reward_alignment.sh`, `eval_commands/policy_ranking.sh`, `eval_commands/confusion_matrix.sh`. For Robo-Dopamine use `.venv-robodopamine/bin/python` (vLLM) instead of `uv run`.
 
 ### Evaluation via HTTP server
 
-```bash
-# Start server
-uv run evals/eval_server.py --config_path=robometer/configs/config.yaml --host=0.0.0.0 --port=8000
+Start the evaluation server on your local machine:
 
-# Client
-uv run python evals/run_model_eval.py --config_path=robometer/configs/config.yaml --server_url=http://localhost:8000 --batch_size=15 --num-batches=-1
+```bash
+uv run python robometer/evals/eval_server.py \
+  server_url=0.0.0.0 \
+  server_port=8000
+```
+
+Then use the example client script to run inference (sends video + task to the server, no robometer dependency):
+
+```bash
+# SOAR 
+uv run python scripts/example_inference.py \
+  --eval-server-url http://localhost:8000 \
+  --video scripts/example_videos/soar_put_green_stick_in_brown_bowl.mp4 \
+  --task "Put green stick in brown bowl" \
+  --fps 3 
+
+# Berkeley RPT (Wrist)
+uv run python scripts/example_inference.py \
+  --eval-server-url http://localhost:8000 \
+  --video scripts/example_videos/berkeley_rpt_stack_cup.mp4 \
+  --task "Pick up the yellow cup and stack it on the other cup" \
+  --fps 3
+
+uv run python scripts/example_inference.py \
+  --eval-server-url http://localhost:8000 \
+  --video /path/to/video.mp4 \
+  --task "your task description"
+```
+
+To run the model locally without a server (loads checkpoint from HuggingFace):
+
+```bash
+uv run python scripts/example_inference_local.py \
+  --model-path aliangdw/Robometer-4B \
+  --video /path/to/video.mp4 \
+  --task "your task description"
 ```
 
 ---

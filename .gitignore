@@ -64,3 +64,4 @@ confusion_matrix_output/*
 *.npy
 run_scripts/*
 paper_stuff/*
+robometer_dataset/*

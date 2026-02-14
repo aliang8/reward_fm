@@ -158,7 +158,7 @@ output:
 
 hub:
   push_to_hub: false
-  hub_repo_id: your-username/{dataset_name}_rfm
+  hub_repo_id: your-username/{dataset_name}_rbm
 ```
 
 ## Step 4: Test Your Implementation

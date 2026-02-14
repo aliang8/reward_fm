@@ -8,6 +8,8 @@ import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # hide INFO/WARN/ERROR; only FATAL remains
 import multiprocessing as mp
+
+import numpy as np
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
@@ -110,7 +112,7 @@ class OutputConfig:
     """Config for output settings"""
 
     output_dir: str = field(default="robometer_dataset", metadata={"help": "Output directory for the dataset"})
-    max_trajectories: int = field(
+    max_trajectories: Optional[int] = field(
         default=None, metadata={"help": "Maximum number of trajectories to process (None for all)"}
     )
     max_frames: int = field(
@@ -280,6 +282,7 @@ def convert_dataset_to_hf_format(
             all_entries.append(processed_trajectory)
     else:
         # Parallel processing
+        all_entries = []  # ensure defined if Pool raises before we filter results
         print(f"Preparing {len(trajectories)} trajectories for parallel processing...")
 
         # Prepare arguments for worker processes
@@ -346,7 +349,6 @@ def convert_dataset_to_hf_format(
         features_dict["frames"] = datasets.Sequence(datasets.Image())
 
     features = datasets.Features(features_dict)
-
     dataset = Dataset.from_dict(data_dict, features=features)
 
     print(f"{dataset_name} HuggingFace dataset created successfully!")
@@ -1037,6 +1039,15 @@ def main(cfg: GenerateConfig):
 
         print(f"Loading RoboReward dataset from: {cfg.dataset.dataset_path}")
         task_data = load_roboreward_dataset(cfg.dataset.dataset_path, cfg.dataset.dataset_name)
+        trajectories = flatten_task_data(task_data)
+    elif "robofac" in cfg.dataset.dataset_name.lower():
+        from dataset_upload.dataset_loaders.robofac_loader import load_robofac_dataset
+
+        print(f"Loading RoboFAC dataset from: {cfg.dataset.dataset_path}")
+        task_data = load_robofac_dataset(
+            cfg.dataset.dataset_path,
+            max_trajectories=cfg.output.max_trajectories,
+        )
         trajectories = flatten_task_data(task_data)
     else:
         raise ValueError(f"Unknown dataset type: {cfg.dataset.dataset_name}")

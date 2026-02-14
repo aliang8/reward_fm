@@ -146,7 +146,15 @@ def load_video_frames(
 
     if isinstance(video_input, (str, os.PathLike)):
         video_path = str(video_input)
-        cap = _open_with_best_backend(video_path)
+        decodable_path = video_path
+        # If file is AV1, re-encode to H.264 so OpenCV can decode (many platforms lack AV1)
+        codec_name = _ffprobe_codec_name(video_path)
+        if codec_name == "av1":
+            h264_path = _reencode_to_h264(video_path, timeout=120)
+            if h264_path is not None:
+                temp_files_to_cleanup.append(h264_path)
+                decodable_path = h264_path
+        cap = _open_with_best_backend(decodable_path)
     else:
         # Save bytes to temp file first
         with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file:

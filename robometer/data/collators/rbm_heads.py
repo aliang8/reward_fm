@@ -518,7 +518,6 @@ class RBMBatchCollator(BaseCollator):
                     "content": content_list,
                 }
             ]
-
             all_messages.append(conversation)
 
         batch_inputs = self._process_conversation(all_messages)

@@ -107,7 +107,7 @@ retry_until_success() {
 # ------------------------------
 repos=(
   abraranwar/libero_rfm
-  #abraranwar/agibotworld_alpha_rfm   
+  abraranwar/agibotworld_alpha_rfm   
   abraranwar/agibotworld_alpha_headcam_rfm   
   abraranwar/usc_koch_rewind_rfm
   ykorkmaz/libero_failure_rfm
@@ -141,6 +141,7 @@ repos=(
   jesbu1/roboreward_rfm_high_res
   jesbu1/rfm_new_mit_franka_rfm_nowrist
   ykorkmaz/usc_trossen_rfm
+  aliangdw/robofac_rbm
 )
 
 # ------------------------------
@@ -154,4 +155,4 @@ for repo in "${repos[@]}"; do
 done
 
 echo ""
-echo "Done. Set RFM_DATASET_PATH=${BASE_DIR} for training/eval."
+echo "Done. Set ROBOMETER_DATASET_PATH=${BASE_DIR} for training/eval."

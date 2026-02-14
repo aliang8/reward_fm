@@ -347,6 +347,7 @@ class TrainingConfig:
     max_seq_length: int = field(default=1024)
     beta: float = field(default=0.1)
     resume_from_checkpoint: Optional[str] = field(default=None)
+    load_from_checkpoint: Optional[str] = field(default=None)
     overwrite_output_dir: bool = field(
         default=False,
         metadata={

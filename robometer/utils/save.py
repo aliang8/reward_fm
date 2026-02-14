@@ -17,12 +17,92 @@ from peft import PeftModel
 from .upload_to_hub import upload_model_to_hub
 from robometer.utils.distributed import is_rank_0
 from robometer.utils.logger import loguru_logger as logger
-from robometer.configs.experiment_configs import ExperimentConfig
+from robometer.configs.experiment_configs import (
+    ExperimentConfig,
+    ModelConfig,
+    LossConfig,
+    DataConfig,
+)
 from pathlib import Path
 from dataclasses import fields
 from typing import Any, Optional, Tuple
 import yaml
 
+
+def _apply_loaded_section_to_dataclass(instance: Any, loaded: dict, valid_names: set) -> None:
+    """Set attributes on instance from loaded dict only for valid field names."""
+    for key, value in loaded.items():
+        if key in valid_names and value is not None:
+            setattr(instance, key, value)
+
+
+def update_cfg_with_pretrained_ckpt(
+    cfg: ExperimentConfig,
+    resume_from_checkpoint: Optional[str],
+) -> None:
+    """
+    When resuming from a HuggingFace (or local) checkpoint, load its config.yaml
+    and update: cfg.model (full replace), and only progress_loss_type and
+    progress_discrete_bins on cfg.loss and cfg.data.
+    """
+    if not resume_from_checkpoint:
+        return
+
+    hub_token = os.environ.get("HF_TOKEN")
+    is_hub = "/" in resume_from_checkpoint and not resume_from_checkpoint.startswith(("/", "./", "../"))
+    config_path: Optional[str] = None
+
+    if is_hub:
+        repo_id, revision = parse_hf_model_id_and_revision(resume_from_checkpoint, model_name="checkpoint")
+        try:
+            from huggingface_hub import hf_hub_download
+
+            config_path = hf_hub_download(
+                repo_id=repo_id, filename="config.yaml", revision=revision, token=hub_token
+            )
+            logger.info(f"Loaded checkpoint config from Hub: {repo_id}@{revision or 'latest'}")
+        except Exception as e:
+            logger.warning(f"Could not load config from checkpoint repo: {e}")
+            return
+    else:
+        resolved = resolve_checkpoint_path(resume_from_checkpoint, hub_token=hub_token)
+        if not resolved:
+            return
+        for candidate in [Path(resolved) / "config.yaml", Path(resolved).parent / "config.yaml"]:
+            if candidate.is_file():
+                config_path = str(candidate)
+                logger.info(f"Loaded checkpoint config from local: {config_path}")
+                break
+        if not config_path:
+            return
+
+    with open(config_path) as f:
+        loaded = yaml.safe_load(f)
+    if not isinstance(loaded, dict):
+        return
+
+    # Replace entire model config except use_peft (keep current run's choice); only sync progress-loss + use_multi_image for loss and data
+    model_names = {f.name for f in fields(ModelConfig)} - {"use_peft"}
+    progress_loss_fields = {"progress_loss_type", "progress_discrete_bins"}
+    loss_names = progress_loss_fields & {f.name for f in fields(LossConfig)}
+    data_sync_fields = progress_loss_fields | {"use_multi_image", "use_per_frame_progress_token"} 
+    data_names = data_sync_fields & {f.name for f in fields(DataConfig)}
+
+    model_loaded = loaded.get("model")
+    loss_loaded = loaded.get("loss")
+    data_loaded = loaded.get("data")
+
+    if model_loaded and isinstance(model_loaded, dict):
+        _apply_loaded_section_to_dataclass(cfg.model, model_loaded, model_names)
+        logger.info("Updated model config from checkpoint (full replace)")
+    if loss_loaded and isinstance(loss_loaded, dict) and loss_names:
+        _apply_loaded_section_to_dataclass(cfg.loss, loss_loaded, loss_names)
+    if data_loaded and isinstance(data_loaded, dict) and data_names:
+        _apply_loaded_section_to_dataclass(cfg.data, data_loaded, data_names)
+    if loss_names or data_names:
+        logger.info(
+            "Updated from checkpoint: progress_loss_type, progress_discrete_bins (loss); progress_loss_type, progress_discrete_bins, use_multi_image (data)"
+        )
 
 def resolve_checkpoint_path(checkpoint_path: Optional[str], hub_token: Optional[str] = None) -> Optional[str]:
     """

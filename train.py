@@ -29,7 +29,7 @@ from robometer.data.datasets.helpers import show_available_datasets
 from robometer.utils.distributed import is_rank_0
 from robometer.utils.logger import rank_0_info
 from robometer.utils.timer import _timer
-from robometer.utils.save import SaveBestCallback, resolve_checkpoint_path
+from robometer.utils.save import SaveBestCallback, resolve_checkpoint_path, update_cfg_with_pretrained_ckpt
 from robometer.utils.setup_utils import (
     create_training_arguments,
     setup_batch_collator,
@@ -88,10 +88,18 @@ def train(cfg: ExperimentConfig):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 
+    checkpoint_to_load = cfg.training.load_from_checkpoint or cfg.training.resume_from_checkpoint
+    if checkpoint_to_load:
+        rank_0_info(f"Loading model from checkpoint: {checkpoint_to_load}")
+    update_cfg_with_pretrained_ckpt(cfg, checkpoint_to_load)
+
     banner("Setting up model and processor")
-    # Use the shared function to set up model and processor
     with _timer("time/setup_model_and_processor", timing_raw=timing_raw):
-        tokenizer, processor, rbm_model = setup_model_and_processor(cfg.model, peft_config=cfg.peft)
+        tokenizer, processor, rbm_model = setup_model_and_processor(
+            cfg.model,
+            hf_model_id=checkpoint_to_load or "",
+            peft_config=cfg.peft,
+        )
 
     # Apply PEFT if enabled
     if cfg.model.use_peft:
@@ -289,12 +297,21 @@ def train(cfg: ExperimentConfig):
 
     rank_0_info(f"Timing raw: {timing_raw}")
 
-    checkpoint_path = resolve_checkpoint_path(cfg.training.resume_from_checkpoint, hub_token=save_best_cfg.hub_token)
-    rank_0_info(f"Training from checkpoint: {checkpoint_path}")
+    # Full resume: restore optimizer state and step counter (load_from_checkpoint only loads weights at setup)
+    hub_token = (save_best_cfg.hub_token if save_best_cfg else None) or os.environ.get("HF_TOKEN")
+    resume_path = (
+        resolve_checkpoint_path(cfg.training.resume_from_checkpoint, hub_token=hub_token)
+        if cfg.training.resume_from_checkpoint
+        else None
+    )
+    if resume_path:
+        rank_0_info(f"Resuming training from checkpoint: {resume_path}")
+    else:
+        rank_0_info("Training from step 0 (no resume)")
 
-    # Restore random state from checkpoint if resuming
-    if checkpoint_path and os.path.isdir(checkpoint_path):
-        random_state_file = os.path.join(checkpoint_path, "dataset_random_state.json")
+    # Restore random state from checkpoint only when doing full resume
+    if resume_path and os.path.isdir(resume_path):
+        random_state_file = os.path.join(resume_path, "dataset_random_state.json")
         if os.path.exists(random_state_file):
             try:
                 with open(random_state_file, "r") as f:
@@ -314,7 +331,7 @@ def train(cfg: ExperimentConfig):
     if cfg.debug:
         rank_0_info("🐛 DEBUG MODE: eval_steps=2, custom_eval_steps=2, eval_subset_size=10")
 
-    trainer.train(resume_from_checkpoint=checkpoint_path)
+    trainer.train(resume_from_checkpoint=resume_path)
     trainer.save_model(cfg.training.output_dir)
     rank_0_info(f"Training complete! Check {cfg.training.output_dir} for checkpoints and final model.")
 

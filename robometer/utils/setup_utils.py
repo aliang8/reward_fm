@@ -343,6 +343,7 @@ def _load_base_model_with_unsloth(
     extra_kwargs: dict,
     peft_config: Optional[PEFTConfig] = None,
     loading_from_checkpoint: bool = False,
+    apply_peft: bool = True,
 ) -> Tuple[Any, Any]:
     """
     Load base model using Unsloth's FastVisionModel.
@@ -353,6 +354,7 @@ def _load_base_model_with_unsloth(
         extra_kwargs: Extra kwargs for model loading (e.g., attn_implementation)
         peft_config: Optional PEFT configuration
         loading_from_checkpoint: If True, skip PEFT application (checkpoint already has weights)
+        apply_peft: If False, do not apply PEFT (e.g. when loading from checkpoint that has no adapter files; PEFT added later in train.py)
 
     Returns:
         Tuple of (base_model, tokenizer)
@@ -371,11 +373,8 @@ def _load_base_model_with_unsloth(
         trust_remote_code=True,
     )
 
-    # Apply PEFT if enabled
-    # IMPORTANT: We must apply PEFT configuration even when loading from checkpoint,
-    # because the checkpoint contains PEFT adapter weights that need the adapter structure to be loaded.
-    # Apply PEFT while model is still wrapped in FastVisionModel
-    if cfg.use_peft and peft_config:
+    # Apply PEFT if enabled (skip when apply_peft=False, e.g. checkpoint has no adapter files; train.py will add PEFT later)
+    if apply_peft and cfg.use_peft and peft_config:
         if loading_from_checkpoint:
             logger.info("Applying PEFT configuration to base model (needed to load adapter weights from checkpoint)")
         else:
@@ -391,6 +390,8 @@ def _load_base_model_with_unsloth(
             lora_dropout=peft_config.lora_dropout,
             bias=peft_config.bias,
         )
+    elif cfg.use_peft and not apply_peft:
+        logger.info("Skipping PEFT here; checkpoint has no adapter files, PEFT will be added in train.py")
 
     # Extract inner model after PEFT is applied (if needed for RBM wrapper)
     # IMPORTANT: After FastVisionModel.get_peft_model(), base_model.model should be a PeftModel
@@ -727,8 +728,30 @@ def setup_model_and_processor(
     else:
         extra_kwargs = {"attn_implementation": "sdpa"}
 
-    # Determine if we're loading from a checkpoint
+    # Determine if we're loading from a checkpoint and whether it has PEFT adapter files
     loading_from_checkpoint = bool(hf_model_id)
+    checkpoint_path_for_load: Optional[str] = None
+    has_adapter_files = True  # default when not loading
+    if hf_model_id:
+        hub_token = os.environ.get("HF_TOKEN")
+        checkpoint_path_for_load = resolve_checkpoint_path(hf_model_id, hub_token=hub_token)
+        if checkpoint_path_for_load:
+            adapter_config_path = os.path.join(checkpoint_path_for_load, "adapter_config.json")
+            adapter_model_paths = [
+                os.path.join(checkpoint_path_for_load, "adapter_model.safetensors"),
+                os.path.join(checkpoint_path_for_load, "adapter_model.bin"),
+            ]
+            has_adapter_files = os.path.exists(adapter_config_path) and any(
+                os.path.exists(p) for p in adapter_model_paths
+            )
+            if cfg.use_peft and not has_adapter_files:
+                logger.info(
+                    "Checkpoint has no PEFT adapter files; will load base+heads then add PEFT in train.py"
+                )
+        else:
+            has_adapter_files = True  # treat as True so we don't skip PEFT
+    # When loading from checkpoint without adapters but use_peft: build base without PEFT, load weights, then train.py adds PEFT
+    apply_peft_before_wrap = cfg.use_peft and (not hf_model_id or has_adapter_files)
 
     # Load processor and tokenizer
     if "SmolVLM" in cfg.base_model_id or "Qwen" in cfg.base_model_id or "Molmo" in cfg.base_model_id:
@@ -755,7 +778,12 @@ def setup_model_and_processor(
             # Load base model (with or without Unsloth)
             if use_unsloth:
                 base_model, tokenizer = _load_base_model_with_unsloth(
-                    cfg, torch_dtype, extra_kwargs, peft_config, loading_from_checkpoint=loading_from_checkpoint
+                    cfg,
+                    torch_dtype,
+                    extra_kwargs,
+                    peft_config,
+                    loading_from_checkpoint=loading_from_checkpoint,
+                    apply_peft=apply_peft_before_wrap,
                 )
             else:
                 base_model = _load_base_model_standard(cfg, torch_dtype, extra_kwargs, bnb)
@@ -771,9 +799,8 @@ def setup_model_and_processor(
         else:
             raise ValueError(f"Invalid base model id: {cfg.base_model_id}")
 
-        # CRITICAL: Ensure PEFT is applied to base_model BEFORE wrapping in RBM
-        # This is necessary because we need the PeftModel structure to load adapter weights from checkpoint
-        if cfg.use_peft and not isinstance(base_model, PeftModel):
+        # CRITICAL: Ensure PEFT is applied to base_model BEFORE wrapping in RBM (when checkpoint has adapters or we're not loading)
+        if apply_peft_before_wrap and cfg.use_peft and not isinstance(base_model, PeftModel):
             logger.warning("PEFT is enabled but base_model is not a PeftModel. Applying PEFT now...")
             if peft_config is None:
                 raise ValueError("PEFT is enabled but peft_config is None. Cannot apply PEFT without configuration.")
@@ -791,8 +818,8 @@ def setup_model_and_processor(
             base_model = get_peft_model(base_model, lora_config)
             logger.info("Applied PEFT to base_model before wrapping in RBM")
 
-        # Verify PEFT was applied correctly if needed
-        if cfg.use_peft:
+        # Verify PEFT was applied when we expect it
+        if apply_peft_before_wrap and cfg.use_peft:
             if isinstance(base_model, PeftModel):
                 logger.info("Confirmed: base_model is a PeftModel - ready to load adapter weights from checkpoint")
             else:
@@ -820,41 +847,28 @@ def setup_model_and_processor(
         # Load checkpoint if provided
         if hf_model_id:
             repo_id, revision_to_load = parse_hf_model_id_and_revision(hf_model_id, model_name="model")
+            checkpoint_path = checkpoint_path_for_load
+            if checkpoint_path is None:
+                hub_token = os.environ.get("HF_TOKEN")
+                checkpoint_path = resolve_checkpoint_path(hf_model_id, hub_token=hub_token)
+            if checkpoint_path is None:
+                raise ValueError(f"Could not resolve checkpoint path: {hf_model_id}")
 
-            # IMPORTANT: When using PEFT, use the standard PeftModel.from_pretrained() to load adapters.
-            # Since we've already ensured base_model is a PeftModel above, we can use PeftModel.from_pretrained()
+            # When use_peft and checkpoint has adapter files: load via PeftModel.from_pretrained + custom heads
+            # When use_peft and checkpoint has NO adapter files: we built base without PEFT; load weights only; train.py will add PEFT
             if cfg.use_peft:
-                logger.info("Loading PEFT adapters using standard PeftModel.from_pretrained() method")
-                # Convert repo_id to local path if needed (handles HuggingFace Hub paths)
-                checkpoint_path = resolve_checkpoint_path(hf_model_id)
-                if checkpoint_path is None:
-                    raise ValueError(f"Could not resolve checkpoint path: {hf_model_id}")
-
-                # Verify that model.model is a PeftModel (it should be since we ensured base_model was a PeftModel)
-                if not isinstance(model.model, PeftModel):
-                    logger.error("CRITICAL: model.model is not a PeftModel! Cannot load adapter weights.")
-                    raise ValueError(
-                        "model.model is not a PeftModel. "
-                        "This should not happen if PEFT was applied correctly before wrapping in RBM."
-                    )
-
-                # Check if adapter files exist first (indicates checkpoint was saved in PEFT format)
-                adapter_config_path = os.path.join(checkpoint_path, "adapter_config.json")
-                adapter_model_paths = [
-                    os.path.join(checkpoint_path, "adapter_model.safetensors"),
-                    os.path.join(checkpoint_path, "adapter_model.bin"),
-                ]
-                has_adapter_files = os.path.exists(adapter_config_path) and any(
-                    os.path.exists(p) for p in adapter_model_paths
-                )
-
                 if has_adapter_files:
-                    # Checkpoint has PEFT adapter files - use PeftModel.from_pretrained()
+                    logger.info("Loading PEFT adapters using standard PeftModel.from_pretrained() method")
+                    if not isinstance(model.model, PeftModel):
+                        logger.error("CRITICAL: model.model is not a PeftModel! Cannot load adapter weights.")
+                        raise ValueError(
+                            "model.model is not a PeftModel. "
+                            "This should not happen if PEFT was applied correctly before wrapping in RBM."
+                        )
                     logger.info("Checkpoint contains PEFT adapter files - loading using PeftModel.from_pretrained()")
                     try:
                         model.model = PeftModel.from_pretrained(model.model, checkpoint_path)
                         logger.info("Successfully loaded PEFT adapters using PeftModel.from_pretrained()")
-                        # Only load custom heads (adapters already loaded)
                         logger.info("Loading custom heads only (adapters already loaded)")
                         _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=False)
                     except Exception as e:
@@ -862,10 +876,8 @@ def setup_model_and_processor(
                         logger.info("Falling back to manual loading for all weights")
                         _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=True)
                 else:
-                    # Checkpoint was saved as full model (no adapter.json) - load everything manually
-                    # This happens when Unsloth saves the full model instead of just adapters
-                    logger.info("Checkpoint was saved as full model (no adapter.json found)")
-                    logger.info("Loading all weights manually from safetensors files (including adapters)")
+                    # Checkpoint has no adapter files; we built base without PEFT, load base+heads only; train.py will add PEFT
+                    logger.info("Checkpoint has no PEFT adapter files - loading base + custom heads (PEFT will be added in train.py)")
                     _load_checkpoint_weights_from_safetensors(model, checkpoint_path, cfg, load_adapters=True)
             else:
                 # For non-PEFT models, we can use from_pretrained as before
@@ -1003,9 +1015,11 @@ def setup_model_and_processor(
     logger.info(f"  - Success head: {getattr(cfg, 'train_success_head', False)}")
     logger.info(f"  - Preference head: {cfg.train_preference_head}")
 
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            logger.info(f"{name:60} | {param.shape} | RG: {param.requires_grad}")
+    # When use_peft, skip verbose param list here; it will be printed after PEFT in setup_peft_model
+    if not cfg.use_peft:
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                logger.info(f"{name:60} | {param.shape} | RG: {param.requires_grad}")
 
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in model.parameters())
@@ -1015,8 +1029,16 @@ def setup_model_and_processor(
     return tokenizer, processor, model
 
 
+def _get_vl_inner_model(rbm_model: RBM):
+    """Return the inner VL model (with .visual and .language_model) from RBM, unwrapping PeftModel if present."""
+    m = rbm_model.model
+    if isinstance(m, PeftModel):
+        return m.get_base_model()
+    return m
+
+
 def setup_peft_model(rbm_model: RBM, cfg: PEFTConfig) -> RBM:
-    """Shared function to apply PEFT configuration to the model"""
+    """Shared function to apply PEFT configuration to the model."""
 
     logger.info("Using PEFT/LoRA training...")
     lora_config = LoraConfig(
@@ -1026,12 +1048,20 @@ def setup_peft_model(rbm_model: RBM, cfg: PEFTConfig) -> RBM:
         lora_dropout=cfg.lora_dropout,
         bias=cfg.bias,
     )
+    inner = _get_vl_inner_model(rbm_model)
     if cfg.peft_vision_encoder:
-        # vision backbone is frozen, but we can still train the LoRA parameters
-        logger.info("Attaching LoRA to only the vision encoder...")
-        rbm_model.base_model.model.visual = get_peft_model(rbm_model.base_model.model.visual, lora_config)
+        logger.info("Attaching LoRA to the vision encoder...")
+        inner.visual = get_peft_model(inner.visual, lora_config)
+    else:
+        # Default: attach LoRA to the language model so adapter weights are actually added
+        logger.info("Attaching LoRA to the language model...")
+        inner.language_model = get_peft_model(inner.language_model, lora_config)
 
-    # Count trainable parameters manually - defer printing until after FSDP setup
+    # Print all trainable parameters after PEFT so adapter weights (lora_A, lora_B, etc.) are visible
+    logger.info("Trainable parameters (after PEFT):")
+    for name, param in rbm_model.named_parameters():
+        if param.requires_grad:
+            logger.info(f"  {name:70} | {param.shape} | RG: {param.requires_grad}")
     trainable_params = sum(p.numel() for p in rbm_model.parameters() if p.requires_grad)
     all_params = sum(p.numel() for p in rbm_model.parameters())
     logger.info(

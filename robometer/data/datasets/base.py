@@ -122,6 +122,13 @@ class BaseDataset(torch.utils.data.Dataset):
         self._cached_is_robot = self.dataset["is_robot"]
 
         logger.info(f"Dataset loaded with {len(self.dataset)} total trajectories")
+        # Log trajectory counts per quality label
+        if "quality_label" in self.dataset.column_names:
+            quality_counts = collections.Counter(
+                str(q) if q is not None else "null" for q in self.dataset["quality_label"]
+            )
+            for label in sorted(quality_counts.keys()):
+                logger.info(f"  quality_label {label}: {quality_counts[label]} trajectories")
 
         # Initialize resampling stats containers shared by subclasses
         self._resample_attempt_stats: Dict[str, collections.defaultdict[str, List[int]]] = {
